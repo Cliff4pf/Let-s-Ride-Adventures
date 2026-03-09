@@ -1,0 +1,56 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && request.auth.token.role == "Admin";
+    }
+    
+    function isSecretary() {
+      return isAuthenticated() && request.auth.token.role == "Secretary";
+    }
+    
+    // USERS Collection
+    match /users/{userId} {
+      // Admins see all, users see themselves
+      allow read: if isAdmin() || isSecretary() || (isAuthenticated() && request.auth.uid == userId);
+      // Only Admins update others, users can update themselves
+      allow write: if isAdmin() || (isAuthenticated() && request.auth.uid == userId);
+    }
+    
+    // VEHICLES Collection
+    match /vehicles/{vehicleId} {
+      // Anyone authenticated can read vehicles to see assigned ones
+      allow read: if isAuthenticated();
+      // Only admins and secretaries manage the fleet
+      allow write: if isAdmin() || isSecretary();
+    }
+    
+    // BOOKINGS Collection
+    match /bookings/{bookingId} {
+      // Admins and Secretaries see all
+      // Tourists see their own
+      // Drivers see their assigned bookings
+      allow read: if isAdmin() || isSecretary() || 
+                  (isAuthenticated() && (resource.data.UserId == request.auth.uid || resource.data.AssignedDriverId == request.auth.uid));
+                  
+      // Any authenticated user can create a booking
+      allow create: if isAuthenticated();
+      
+      // Tourists can update their own bookings (e.g., cancel)
+      // Admins/Secretaries can update any (e.g., approve/assign)
+      // Drivers can update their assigned bookings (e.g., in_progress)
+      allow update: if isAdmin() || isSecretary() || 
+                    (isAuthenticated() && (resource.data.UserId == request.auth.uid || resource.data.AssignedDriverId == request.auth.uid));
+                    
+      // Only Admins can permanently wipe a booking records
+      allow delete: if isAdmin();
+    }
+  }
+}

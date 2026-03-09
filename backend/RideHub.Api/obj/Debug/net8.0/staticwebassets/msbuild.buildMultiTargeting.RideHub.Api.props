@@ -1,0 +1,3 @@
+﻿<Project>
+  <Import Project="..\build\RideHub.Api.props" />
+</Project>

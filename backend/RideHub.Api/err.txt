@@ -1,0 +1,234 @@
+Building...
+fail: Microsoft.Extensions.Hosting.Internal.Host[11]
+      Hosting failed to start
+      System.IO.IOException: Failed to bind to address http://127.0.0.1:5201: address already in use.
+       ---> Microsoft.AspNetCore.Connections.AddressInUseException: Only one usage of each socket address (protocol/network address/port) is normally permitted.
+       ---> System.Net.Sockets.SocketException (10048): Only one usage of each socket address (protocol/network address/port) is normally permitted.
+         at System.Net.Sockets.Socket.UpdateStatusAfterSocketErrorAndThrowException(SocketError error, Boolean disconnectOnFailure, String callerName)
+         at System.Net.Sockets.Socket.DoBind(EndPoint endPointSnapshot, SocketAddress socketAddress)
+         at System.Net.Sockets.Socket.Bind(EndPoint localEP)
+         at Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets.SocketTransportOptions.CreateDefaultBoundListenSocket(EndPoint endpoint)
+         at Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets.SocketConnectionListener.Bind()
+         --- End of inner exception stack trace ---
+         at Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets.SocketConnectionListener.Bind()
+         at Microsoft.AspNetCore.Server.Kestrel.Transport.Sockets.SocketTransportFactory.BindAsync(EndPoint endpoint, CancellationToken cancellationToken)
+         at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure.TransportManager.BindAsync(EndPoint endPoint, ConnectionDelegate connectionDelegate, EndpointConfig endpointConfig, CancellationToken cancellationToken)
+         at Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerImpl.<>c__DisplayClass28_0`1.<<StartAsync>g__OnBind|0>d.MoveNext()
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.AddressBinder.BindEndpointAsync(ListenOptions endpoint, AddressBindContext context, CancellationToken cancellationToken)
+         --- End of inner exception stack trace ---
+         at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.AddressBinder.BindEndpointAsync(ListenOptions endpoint, AddressBindContext context, CancellationToken cancellationToken)
+         at Microsoft.AspNetCore.Server.Kestrel.Core.LocalhostListenOptions.BindAsync(AddressBindContext context, CancellationToken cancellationToken)
+         at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.AddressBinder.AddressesStrategy.BindAsync(AddressBindContext context, CancellationToken cancellationToken)
+         at Microsoft.AspNetCore.Server.Kestrel.Core.Internal.AddressBinder.BindAsync(ListenOptions[] listenOptions, AddressBindContext context, Func`2 useHttps, CancellationToken cancellationToken)
+         at Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerImpl.BindAsync(CancellationToken cancellationToken)
+         at Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerImpl.StartAsync[TContext](IHttpApplication`1 application, CancellationToken cancellationToken)
+         at Microsoft.AspNetCore.Hosting.GenericWebHostService.StartAsync(CancellationToken cancellationToken)
+         at Microsoft.Extensions.Hosting.Internal.Host.<StartAsync>b__15_1(IHostedService service, CancellationToken token)
+         at Microsoft.Extensions.Hosting.Internal.Host.ForeachService[T](IEnumerable`1 services, CancellationToken token, Boolean concurrent, Boolean abortOnFirstException, List`1 exceptions, Func`3 operation)
+dotnet : Unhandled 
+exception. 
+System.IO.IOException: 
+Failed to bind to 
+address 
+http://127.0.0.1:5201: 
+address already in use.
+At line:1 char:1
++ dotnet run 2>&1 | 
+Out-File -Encoding 
+ASCII ./err.txt
++ ~~~~~~~~~~~~~~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (Unhandled exc   
+ ep...already in us    
+e.:String) [], Rem    
+oteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+ ---> Microsoft.AspNetC
+ore.Connections.Address
+InUseException: Only 
+one usage of each 
+socket address 
+(protocol/network 
+address/port) is 
+normally permitted.
+ ---> System.Net.Socket
+s.SocketException 
+(10048): Only one 
+usage of each socket 
+address 
+(protocol/network 
+address/port) is 
+normally permitted.
+   at System.Net.Socket
+s.Socket.UpdateStatusAf
+terSocketErrorAndThrowE
+xception(SocketError 
+error, Boolean 
+disconnectOnFailure, 
+String callerName)
+   at System.Net.Socket
+s.Socket.DoBind(EndPoin
+t endPointSnapshot, 
+SocketAddress 
+socketAddress)
+   at System.Net.Socket
+s.Socket.Bind(EndPoint 
+localEP)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Tran
+sport.Sockets.SocketTra
+nsportOptions.CreateDef
+aultBoundListenSocket(E
+ndPoint endpoint)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Tran
+sport.Sockets.SocketCon
+nectionListener.Bind()
+   --- End of inner 
+exception stack trace 
+---
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Tran
+sport.Sockets.SocketCon
+nectionListener.Bind()
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Tran
+sport.Sockets.SocketTra
+nsportFactory.BindAsync
+(EndPoint endpoint, 
+CancellationToken 
+cancellationToken)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.Internal.Infrastructur
+e.TransportManager.Bind
+Async(EndPoint 
+endPoint, 
+ConnectionDelegate 
+connectionDelegate, 
+EndpointConfig 
+endpointConfig, 
+CancellationToken 
+cancellationToken)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.KestrelServerImpl.<>c_
+_DisplayClass28_0`1.<<S
+tartAsync>g__OnBind|0>d
+.MoveNext()
+--- End of stack trace 
+from previous location 
+---
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.Internal.AddressBinder
+.BindEndpointAsync(List
+enOptions endpoint, 
+AddressBindContext 
+context, 
+CancellationToken 
+cancellationToken)
+   --- End of inner 
+exception stack trace 
+---
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.Internal.AddressBinder
+.BindEndpointAsync(List
+enOptions endpoint, 
+AddressBindContext 
+context, 
+CancellationToken 
+cancellationToken)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.LocalhostListenOptions
+.BindAsync(AddressBindC
+ontext context, 
+CancellationToken 
+cancellationToken)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.Internal.AddressBinder
+.AddressesStrategy.Bind
+Async(AddressBindContex
+t context, 
+CancellationToken 
+cancellationToken)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.Internal.AddressBinder
+.BindAsync(ListenOption
+s[] listenOptions, 
+AddressBindContext 
+context, Func`2 
+useHttps, 
+CancellationToken 
+cancellationToken)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.KestrelServerImpl.Bind
+Async(CancellationToken
+ cancellationToken)
+   at Microsoft.AspNetC
+ore.Server.Kestrel.Core
+.KestrelServerImpl.Star
+tAsync[TContext](IHttpA
+pplication`1 
+application, 
+CancellationToken 
+cancellationToken)
+   at Microsoft.AspNetC
+ore.Hosting.GenericWebH
+ostService.StartAsync(C
+ancellationToken 
+cancellationToken)
+   at Microsoft.Extensi
+ons.Hosting.Internal.Ho
+st.<StartAsync>b__15_1(
+IHostedService 
+service, 
+CancellationToken 
+token)
+   at Microsoft.Extensi
+ons.Hosting.Internal.Ho
+st.ForeachService[T](IE
+numerable`1 services, 
+CancellationToken 
+token, Boolean 
+concurrent, Boolean 
+abortOnFirstException, 
+List`1 exceptions, 
+Func`3 operation)
+   at Microsoft.Extensi
+ons.Hosting.Internal.Ho
+st.StartAsync(Cancellat
+ionToken 
+cancellationToken)
+   at Microsoft.Extensi
+ons.Hosting.HostingAbst
+ractionsHostExtensions.
+RunAsync(IHost host, 
+CancellationToken 
+token)
+   at Microsoft.Extensi
+ons.Hosting.HostingAbst
+ractionsHostExtensions.
+RunAsync(IHost host, 
+CancellationToken 
+token)
+   at Microsoft.Extensi
+ons.Hosting.HostingAbst
+ractionsHostExtensions.
+Run(IHost host)
+   at Program.<Main>$(S
+tring[] args) in C:\Use
+rs\Cliff\OneDrive\Docum
+ents\RideHub\backend\Ri
+deHub.Api\Program.cs:li
+ne 116
