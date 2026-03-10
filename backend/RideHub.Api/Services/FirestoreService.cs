@@ -207,6 +207,33 @@ namespace RideHub.Api.Services
             await _firestoreDb.Collection("auditLogs").AddAsync(log);
         }
 
+        public async Task<List<AuditLog>> GetAuditLogsAsync(int limit = 100)
+        {
+            Query query = _firestoreDb.Collection("auditLogs")
+                .OrderByDescending("Timestamp")
+                .Limit(limit);
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            return snapshot.Documents.Select(d => d.ConvertTo<AuditLog>()).ToList();
+        }
+
+        public async Task<List<AuditLog>> GetAuditLogsByUserAsync(string userId)
+        {
+            Query query = _firestoreDb.Collection("auditLogs")
+                .WhereEqualTo("PerformedByUid", userId)
+                .OrderByDescending("Timestamp");
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            return snapshot.Documents.Select(d => d.ConvertTo<AuditLog>()).ToList();
+        }
+
+        public async Task<List<AuditLog>> GetAuditLogsByActionAsync(string actionType)
+        {
+            Query query = _firestoreDb.Collection("auditLogs")
+                .WhereEqualTo("ActionType", actionType)
+                .OrderByDescending("Timestamp");
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            return snapshot.Documents.Select(d => d.ConvertTo<AuditLog>()).ToList();
+        }
+
         // Commission & Revenue
         public async Task AddCommissionAndRevenueAsync(string driverId, decimal bookingPrice)
         {
@@ -294,6 +321,122 @@ namespace RideHub.Api.Services
                 };
                 await metricsRef.SetAsync(newMetrics);
             }
+        }
+
+        // ===== FEEDBACK METHODS =====
+        public async Task<string> AddFeedbackAsync(Feedback feedback)
+        {
+            DocumentReference docRef = await _firestoreDb.Collection("feedback").AddAsync(feedback);
+            return docRef.Id;
+        }
+
+        public async Task<Feedback?> GetFeedbackAsync(string id)
+        {
+            DocumentSnapshot snapshot = await _firestoreDb.Collection("feedback").Document(id).GetSnapshotAsync();
+            if (snapshot.Exists)
+            {
+                return snapshot.ConvertTo<Feedback>();
+            }
+            return null;
+        }
+
+        public async Task<List<Feedback>> GetFeedbackByUserAsync(string userId)
+        {
+            Query query = _firestoreDb.Collection("feedback").WhereEqualTo("UserId", userId);
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            return snapshot.Documents.Select(d => d.ConvertTo<Feedback>()).ToList();
+        }
+
+        public async Task<List<Feedback>> GetFeedbackForUserAsync(string targetUserId)
+        {
+            Query query = _firestoreDb.Collection("feedback").WhereEqualTo("TargetUserId", targetUserId);
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            return snapshot.Documents.Select(d => d.ConvertTo<Feedback>()).ToList();
+        }
+
+        public async Task UpdateFeedbackAsync(Feedback feedback)
+        {
+            DocumentReference docRef = _firestoreDb.Collection("feedback").Document(feedback.Id);
+            await docRef.SetAsync(feedback, SetOptions.MergeAll);
+        }
+
+        public async Task DeleteFeedbackAsync(string id)
+        {
+            await _firestoreDb.Collection("feedback").Document(id).DeleteAsync();
+        }
+
+        // ===== MESSAGE METHODS =====
+        public async Task<string> AddMessageAsync(Message message)
+        {
+            DocumentReference docRef = await _firestoreDb.Collection("messages").AddAsync(message);
+            return docRef.Id;
+        }
+
+        public async Task<Message?> GetMessageAsync(string id)
+        {
+            DocumentSnapshot snapshot = await _firestoreDb.Collection("messages").Document(id).GetSnapshotAsync();
+            if (snapshot.Exists)
+            {
+                return snapshot.ConvertTo<Message>();
+            }
+            return null;
+        }
+
+        public async Task<List<Message>> GetConversationAsync(string userId1, string userId2)
+        {
+            Query query = _firestoreDb.Collection("messages")
+                .WhereEqualTo("SenderId", userId1)
+                .WhereEqualTo("RecipientId", userId2);
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            var messages = snapshot.Documents.Select(d => d.ConvertTo<Message>()).ToList();
+
+            // Also get messages from userId2 to userId1
+            query = _firestoreDb.Collection("messages")
+                .WhereEqualTo("SenderId", userId2)
+                .WhereEqualTo("RecipientId", userId1);
+            snapshot = await query.GetSnapshotAsync();
+            messages.AddRange(snapshot.Documents.Select(d => d.ConvertTo<Message>()));
+
+            // Sort by timestamp
+            return messages.OrderBy(m => m.CreatedAt.ToDateTime()).ToList();
+        }
+
+        public async Task<List<Message>> GetUserMessagesAsync(string userId)
+        {
+            Query query = _firestoreDb.Collection("messages")
+                .WhereEqualTo("RecipientId", userId)
+                .OrderByDescending("CreatedAt");
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            return snapshot.Documents.Select(d => d.ConvertTo<Message>()).ToList();
+        }
+
+        public async Task<List<Message>> GetUnreadMessagesAsync(string userId)
+        {
+            Query query = _firestoreDb.Collection("messages")
+                .WhereEqualTo("RecipientId", userId)
+                .WhereEqualTo("IsRead", false);
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            return snapshot.Documents.Select(d => d.ConvertTo<Message>()).ToList();
+        }
+
+        public async Task MarkMessageAsReadAsync(string messageId)
+        {
+            await _firestoreDb.Collection("messages").Document(messageId).UpdateAsync(new Dictionary<string, object>
+            {
+                { "IsRead", true },
+                { "ReadAt", Timestamp.GetCurrentTimestamp() }
+            });
+        }
+
+        public async Task UpdateMessageAsync(Message message)
+        {
+            DocumentReference docRef = _firestoreDb.Collection("messages").Document(message.Id);
+            await docRef.SetAsync(message, SetOptions.MergeAll);
+        }
+
+        public async Task DeleteMessageAsync(string id)
+        {
+            await _firestoreDb.Collection("messages").Document(id).DeleteAsync();
         }
     }
 }

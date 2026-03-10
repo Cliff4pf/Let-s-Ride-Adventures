@@ -1,5 +1,7 @@
 import api from "../api.js";
 import { icons, createNavItem } from "./shared.js";
+import { attachLogoutListener } from "./logout-helper.js";
+import { initializeProfileModal } from "./profile-modal.js";
 
 let driverState = {
     activeTab: 'trips' // 'trips', 'schedule', 'history'
@@ -23,6 +25,13 @@ export async function renderDriverUI(sidebar, content) {
             }
         });
     });
+
+    // Attach logout listener
+    const logoutBtn = sidebar.querySelector('#logoutBtn');
+    attachLogoutListener(logoutBtn);
+
+    // Initialize profile modal
+    initializeProfileModal();
 
     if (driverState.activeTab === 'trips') {
         await renderTripsView(content);

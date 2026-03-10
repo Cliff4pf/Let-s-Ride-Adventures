@@ -1,5 +1,7 @@
 import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
+import { attachLogoutListener } from "./logout-helper.js";
+import { initializeProfileModal } from "./profile-modal.js";
 
 let secretaryState = {
     activeTab: 'dashboard' // 'dashboard', 'create-booking', 'update-bookings'
@@ -24,6 +26,13 @@ export async function renderSecretaryUI(sidebar, content) {
         });
     });
 
+    // Attach logout listener
+    const logoutBtn = sidebar.querySelector('#logoutBtn');
+    attachLogoutListener(logoutBtn);
+
+    // Initialize profile modal
+    initializeProfileModal();
+
     if (secretaryState.activeTab === 'dashboard') {
         await renderDispatcherDashboard(content);
     } else if (secretaryState.activeTab === 'create-booking') {
@@ -45,65 +54,99 @@ async function renderCreateBookingView(content) {
             .join('');
 
         content.innerHTML = `
-            <div class="page-header">
-                <h2>Create New Booking</h2>
-                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">Create a booking on behalf of a tourist</p>
+            <div class="page-header" style="margin-bottom: 2rem;">
+                <div>
+                    <h2 style="margin: 0; color: var(--text-primary); font-size: 1.75rem; font-weight: 700;">Create New Booking</h2>
+                    <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">Arrange a ride for your guests with flexible options and real-time pricing</p>
+                </div>
             </div>
 
-            <div class="booking-container">
+            <div class="booking-container" style="max-width: 900px; margin: 0 auto;">
                 <div class="booking-form-section">
-                    <div class="form-card">
-                        <form id="secretaryBookingForm" style="display: flex; flex-direction: column; gap: 1.5rem;">
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-                                <div class="form-group">
-                                    <label for="bookingType">Booking Type</label>
-                                    <select id="bookingType" name="bookingType" required style="width: 100%; padding: 0.875rem; border: 1px solid var(--border-color); border-radius: 8px; background: white; cursor: pointer;">
-                                        <option value="Transfer">Transfer</option>
-                                        <option value="Tour">Tour</option>
-                                        <option value="Pickup">Pickup</option>
+                    <div class="card-modern" style="border: 1px solid var(--border-light); box-shadow: var(--shadow-lg);">
+                        <div style="padding: 2rem; background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; border-radius: var(--radius-lg) var(--radius-lg) 0 0;">
+                            <h3 style="margin: 0; font-size: 1.25rem; font-weight: 600;">Booking Details</h3>
+                            <p style="margin: 0.5rem 0 0; opacity: 0.9;">Fill in all details for a new ride</p>
+                        </div>
+                        
+                        <form id="secretaryBookingForm" style="padding: 2rem;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+                                <div class="form-group-modern">
+                                    <label for="bookingType" style="display: flex; align-items: center; gap: 0.5rem;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                                        Booking Type
+                                    </label>
+                                    <select id="bookingType" name="bookingType" required style="width: 100%; padding: 0.875rem; border: 2px solid var(--border-color); border-radius: var(--radius-lg); background: white; cursor: pointer; font-size: 0.875rem; transition: border-color 0.2s;">
+                                        <option value="Transfer">🚗 Transfer</option>
+                                        <option value="Tour">🗺️ Tour</option>
+                                        <option value="Pickup">📍 Pickup/Dropoff</option>
                                     </select>
                                 </div>
-                                <div class="form-group">
-                                    <label for="guests">Number of Guests</label>
-                                    <input type="number" id="guests" name="numberOfGuests" min="1" required value="1" style="width: 100%; padding: 0.875rem; border: 1px solid var(--border-color); border-radius: 8px;">
+                                <div class="form-group-modern">
+                                    <label for="guests" style="display: flex; align-items: center; gap: 0.5rem;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>
+                                        Passengers
+                                    </label>
+                                    <input type="number" id="guests" name="numberOfGuests" min="1" max="8" required value="1" style="width: 100%; padding: 0.875rem; border: 2px solid var(--border-color); border-radius: var(--radius-lg); font-size: 0.875rem; transition: border-color 0.2s;">
                                 </div>
                             </div>
 
-                            <div class="form-group">
-                                <label for="pickup">Pickup Location</label>
-                                <input type="text" id="pickup" name="pickupLocation" placeholder="Enter pickup location" required style="width: 100%; padding: 0.875rem; border: 1px solid var(--border-color); border-radius: 8px;">
+                            <div class="form-group-modern">
+                                <label for="pickup" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                                    Pickup Location
+                                </label>
+                                <input type="text" id="pickup" name="pickupLocation" placeholder="Enter or select pickup location" required style="width: 100%; padding: 0.875rem; border: 2px solid var(--border-color); border-radius: var(--radius-lg); font-size: 0.875rem; transition: border-color 0.2s;">
                             </div>
 
-                            <div class="form-group">
-                                <label for="destination">Destination</label>
-                                <input type="text" id="destination" name="destination" placeholder="Enter destination" required style="width: 100%; padding: 0.875rem; border: 1px solid var(--border-color); border-radius: 8px;">
+                            <div class="form-group-modern">
+                                <label for="destination" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg>
+                                    Destination
+                                </label>
+                                <input type="text" id="destination" name="destination" placeholder="Enter destination" required style="width: 100%; padding: 0.875rem; border: 2px solid var(--border-color); border-radius: var(--radius-lg); font-size: 0.875rem; transition: border-color 0.2s;">
                             </div>
 
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
-                                <div class="form-group">
-                                    <label for="startDate">Start Date & Time</label>
-                                    <input type="datetime-local" id="startDate" name="startDate" required style="width: 100%; padding: 0.875rem; border: 1px solid var(--border-color); border-radius: 8px;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+                                <div class="form-group-modern">
+                                    <label for="startDate" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                        Date & Time
+                                    </label>
+                                    <input type="datetime-local" id="startDate" name="startDate" required style="width: 100%; padding: 0.875rem; border: 2px solid var(--border-color); border-radius: var(--radius-lg); font-size: 0.875rem; transition: border-color 0.2s;">
                                 </div>
-                                <div class="form-group">
-                                    <label for="vehiclePreference">Vehicle Type</label>
-                                    <select id="vehiclePreference" name="vehiclePreference" style="width: 100%; padding: 0.875rem; border: 1px solid var(--border-color); border-radius: 8px; background: white; cursor: pointer;">
-                                        <option value="Any">Any</option>
+                                <div class="form-group-modern">
+                                    <label for="vehiclePreference" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+                                        Vehicle Type
+                                    </label>
+                                    <select id="vehiclePreference" name="vehiclePreference" style="width: 100%; padding: 0.875rem; border: 2px solid var(--border-color); border-radius: var(--radius-lg); background: white; cursor: pointer; font-size: 0.875rem; transition: border-color 0.2s;">
+                                        <option value="Any">Any Available</option>
                                         ${vehicleOptions}
                                     </select>
                                 </div>
                             </div>
 
-                            <div class="form-group">
-                                <label for="specialRequests">Special Requests (Optional)</label>
-                                <textarea id="specialRequests" name="specialRequests" placeholder="Any special requests?" style="width: 100%; padding: 0.875rem; border: 1px solid var(--border-color); border-radius: 8px; resize: vertical; min-height: 80px;"></textarea>
+                            <div class="form-group-modern">
+                                <label for="specialRequests" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                                    Special Requests
+                                </label>
+                                <textarea id="specialRequests" name="specialRequests" placeholder="Any special requests? (baby seat, extra luggage, etc.)" style="width: 100%; padding: 0.875rem; border: 2px solid var(--border-color); border-radius: var(--radius-lg); resize: vertical; min-height: 80px; font-size: 0.875rem; transition: border-color 0.2s; font-family: inherit;"></textarea>
                             </div>
 
-                            <div class="form-group">
-                                <label for="price">Estimated Price (KSH)</label>
-                                <input type="number" id="price" name="price" min="0" step="50" placeholder="0.00" required style="width: 100%; padding: 0.875rem; border: 1px solid var(--border-color); border-radius: 8px;">
+                            <div class="form-group-modern">
+                                <label for="price" style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                                    Estimated Price (KSH)
+                                </label>
+                                <input type="number" id="price" name="price" min="0" step="50" placeholder="Enter price estimate" required style="width: 100%; padding: 0.875rem; border: 2px solid var(--border-color); border-radius: var(--radius-lg); font-size: 0.875rem; transition: border-color 0.2s;">
                             </div>
 
-                            <button type="submit" class="btn btn-primary" style="width: 100%; padding: 1rem; font-weight: 600;">Create Booking</button>
+                            <button type="submit" class="btn-modern btn-primary-modern" style="width: 100%; padding: 1rem; font-weight: 600; margin-top: 1rem; font-size: 1rem;">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline-block;"><path d="M12 4v16m8-8H4"/></svg>
+                                Create Booking
+                            </button>
                         </form>
                     </div>
                 </div>

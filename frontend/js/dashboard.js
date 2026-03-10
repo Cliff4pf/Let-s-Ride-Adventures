@@ -40,8 +40,8 @@ onAuthStateChanged(auth, async (user) => {
             throw new Error('User has no role assigned');
         }
 
-        // Initialize layout
-        initializeDashboard(role);
+        // Initialize layout with profile data
+        initializeDashboard(role, profile);
     } catch (error) {
         console.error("Dashboard initialization error:", error);
         await signOut(auth);
@@ -51,14 +51,21 @@ onAuthStateChanged(auth, async (user) => {
     }
 });
 
-async function initializeDashboard(role) {
-    // 1. Setup User Profile UI
+async function initializeDashboard(role, profile) {
+    // 1. Setup User Profile UI with actual data
     const roleElem = document.getElementById('userRole');
     if (roleElem) roleElem.textContent = role;
 
     const nameElem = document.getElementById('userName');
-    if (nameElem && role === 'Admin') nameElem.textContent = 'Administrator';
-    if (nameElem && role === 'Tourist') nameElem.textContent = 'Tourist User';
+    if (nameElem) nameElem.textContent = profile.fullName || 'User';
+
+    const avatarElem = document.getElementById('userAvatar');
+    if (avatarElem) {
+        const initials = (profile.fullName || 'U').split(' ').map(n => n[0]).join('').toUpperCase();
+        avatarElem.textContent = initials || 'U';
+        // Store profile data in element for profile modal
+        avatarElem.dataset.profile = JSON.stringify(profile);
+    }
 
     // 2. Clear loading state
     const contentArea = document.getElementById('dashboardContent');
@@ -86,7 +93,7 @@ async function initializeDashboard(role) {
             break;
     }
 
-    // Attach logout event
+    // Attach logout event (fallback)
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) {
         logoutBtn.addEventListener('click', async (e) => {

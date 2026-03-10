@@ -65,3 +65,4 @@ C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\M
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\System.IdentityModel.Tokens.Jwt.dll
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\SendGrid.dll
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\StarkbankEcdsa.dll
+C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\obj\Debug\net8.0\RideHub.Api.sourcelink.json

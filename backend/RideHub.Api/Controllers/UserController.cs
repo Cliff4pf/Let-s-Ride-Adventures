@@ -379,5 +379,134 @@ namespace RideHub.Api.Controllers
                 return StatusCode(500, $"Migration failed: {ex.Message}");
             }
         }
+
+        // PUT: api/user/profile
+        [HttpPut("profile")]
+        public async Task<IActionResult> UpdateFullProfile([FromBody] UpdateProfileDTO request)
+        {
+            var uid = User.FindFirst("user_id")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(uid)) return Unauthorized(ApiResponse.Error("Unauthorized access."));
+
+            if (!ModelState.IsValid) return BadRequest(ApiResponse.Error("Invalid request data."));
+
+            try
+            {
+                var profile = await _firestoreService.GetUserAsync(uid);
+                if (profile == null) return NotFound(ApiResponse.Error("User profile not found."));
+
+                // Update basic profile fields
+                if (!string.IsNullOrEmpty(request.FullName))
+                    profile.FullName = request.FullName;
+
+                if (!string.IsNullOrEmpty(request.Email))
+                    profile.Email = request.Email.ToLower().Trim();
+
+                if (!string.IsNullOrEmpty(request.PhoneNumber))
+                    profile.PhoneNumber = request.PhoneNumber;
+
+                if (!string.IsNullOrEmpty(request.LicenseNumber) && profile.Role == "Driver")
+                    profile.LicenseNumber = request.LicenseNumber;
+
+                profile.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
+
+                // Handle password change if provided
+                if (!string.IsNullOrEmpty(request.CurrentPassword) && !string.IsNullOrEmpty(request.NewPassword))
+                {
+                    // For Firebase, password change would typically be done via the Firebase Auth API
+                    // This is a simplified version - in production, use Firebase Admin SDK properly
+                    if (request.NewPassword.Length < 6)
+                        return BadRequest(ApiResponse.Error("New password must be at least 6 characters."));
+
+                    try
+                    {
+                        await FirebaseAuth.DefaultInstance.UpdateUserAsync(new UserRecordArgs
+                        {
+                            Uid = uid,
+                            Password = request.NewPassword
+                        });
+
+                        // Log password change
+                        await _firestoreService.CreateAuditLogAsync(new AuditLog
+                        {
+                            ActionType = "PASSWORD_CHANGED",
+                            EntityId = uid,
+                            EntityType = "User",
+                            PerformedByUid = uid,
+                            Details = "User changed their password"
+                        });
+                    }
+                    catch (Exception pwEx)
+                    {
+                        Console.WriteLine($"Password change error: {pwEx.Message}");
+                        return BadRequest(ApiResponse.Error("Failed to change password."));
+                    }
+                }
+
+                // Save profile updates
+                await _firestoreService.UpdateUserAsync(profile);
+
+                // Create audit log for profile update
+                await _firestoreService.CreateAuditLogAsync(new AuditLog
+                {
+                    ActionType = "PROFILE_UPDATE",
+                    EntityId = uid,
+                    EntityType = "User",
+                    PerformedByUid = uid,
+                    Details = "User updated their profile information"
+                });
+
+                return Ok(ApiResponse<User>.Ok(profile, "Profile updated successfully."));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error updating profile: {ex.Message}");
+                return StatusCode(500, ApiResponse.Error("Failed to update profile."));
+            }
+        }
+
+        // POST: api/user/change-password
+        [HttpPost("change-password")]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordDTO request)
+        {
+            var uid = User.FindFirst("user_id")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(uid)) return Unauthorized(ApiResponse.Error("Unauthorized access."));
+
+            if (!ModelState.IsValid) return BadRequest(ApiResponse.Error("Invalid request data."));
+
+            try
+            {
+                if (request.NewPassword.Length < 6)
+                    return BadRequest(ApiResponse.Error("New password must be at least 6 characters."));
+
+                // Update password in Firebase
+                await FirebaseAuth.DefaultInstance.UpdateUserAsync(new UserRecordArgs
+                {
+                    Uid = uid,
+                    Password = request.NewPassword
+                });
+
+                // Create audit log
+                await _firestoreService.CreateAuditLogAsync(new AuditLog
+                {
+                    ActionType = "PASSWORD_CHANGED",
+                    EntityId = uid,
+                    EntityType = "User",
+                    PerformedByUid = uid,
+                    Details = "User successfully changed their password"
+                });
+
+                return Ok(ApiResponse.Ok("Password changed successfully."));
+            }
+            catch (FirebaseAuthException ex)
+            {
+                Console.WriteLine($"Firebase Auth error: {ex.Message}");
+                return BadRequest(ApiResponse.Error($"Failed to change password: {ex.Message}"));
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error changing password: {ex.Message}");
+                return StatusCode(500, ApiResponse.Error("Failed to change password."));
+            }
+        }
     }
 }

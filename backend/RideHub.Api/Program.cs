@@ -27,7 +27,7 @@ if (FirebaseApp.DefaultInstance == null)
 {
     FirebaseApp.Create(new AppOptions()
     {
-        Credential = GoogleCredential
+        Credential = Google.Apis.Auth.OAuth2.GoogleCredential
             .FromFile(credentialPath)
             .CreateScoped("https://www.googleapis.com/auth/cloud-platform")
     });
@@ -46,7 +46,12 @@ builder.Services.AddSingleton(provider =>
 builder.Services.AddSingleton<RideHub.Api.Services.FirestoreService>();
 builder.Services.AddSingleton<RideHub.Api.Services.EmailService>();
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Enable case-insensitive JSON deserialization for camelCase properties
+        options.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
+    });
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>

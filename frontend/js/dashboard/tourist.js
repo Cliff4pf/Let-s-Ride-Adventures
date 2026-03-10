@@ -1,10 +1,251 @@
 import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
+import { attachLogoutListener } from "./logout-helper.js";
+import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
+import { showPaymentAndRatingModal } from "./payment-confirmation-modal.js";
+
+// Helper functions
+function getVehicleIcon(vehicleType) {
+    const vehicleIcons = {
+        'sedan': icons.sedan,
+        'suv': icons.suv,
+        'van': icons.van,
+        'bike': icons.bike
+    };
+    return vehicleIcons[vehicleType] || icons.car;
+}
+
+function getStatusIcon(status) {
+    // Using emoji icons (guaranteed to work) with Font Awesome fallback
+    const statusIcons = {
+        'PENDING': '<span style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;">⏳</span>',
+        'APPROVED': '<span style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: #10b981;">✅</span>',
+        'ASSIGNED': '<span style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;">🚗</span>',
+        'COMPLETED': '<span style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: #10b981;">✓</span>',
+        'CANCELLED': '<span style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; color: #ef4444;">✕</span>'
+    };
+    return statusIcons[status] || '<span style="display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;">?</span>';
+}
+
+// Calculate user rating based on cancellation history
+function calculateUserRating(bookings) {
+    if (!bookings || bookings.length === 0) return 5.0;
+    const totalBookings = bookings.length;
+    const cancelledCount = bookings.filter(b => b.status === 'CANCELLED').length;
+    const cancellationRate = cancelledCount / totalBookings;
+    
+    // Rating formula: Start at 5.0, deduct 0.5 for each cancellation
+    // Minimum rating: 1.0
+    const rating = Math.max(1.0, 5.0 - (cancelledCount * 0.5));
+    return Math.round(rating * 10) / 10; // Round to 1 decimal place
+}
+
+// Setup menu bar events (settings dropdown, notifications, messages)
+function setupMenuBarEvents() {
+    const settingsBtn = document.getElementById('settingsBtnTopbar');
+    const settingsDropdown = document.getElementById('settingsDropdown');
+    const profileSettingLink = document.getElementById('profileSettingLink');
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const logoutSettingBtn = document.getElementById('logoutSettingBtn');
+    const notificationBtn = document.getElementById('notificationBtnTopbar');
+    const messageBtn = document.getElementById('messageBtnTopbar');
+
+    // Settings dropdown toggle
+    if (settingsBtn && settingsDropdown) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            settingsDropdown.style.display = settingsDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!settingsBtn.contains(e.target) && !settingsDropdown.contains(e.target)) {
+                settingsDropdown.style.display = 'none';
+            }
+        });
+
+        // Dropdown hover effects
+        settingsDropdown.querySelectorAll('a, button').forEach(item => {
+            item.addEventListener('mouseenter', () => {
+                item.style.background = 'var(--surface-hover)';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+            });
+        });
+    }
+
+    // Profile link
+    if (profileSettingLink) {
+        profileSettingLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            settingsDropdown.style.display = 'none';
+            openProfileModal();
+        });
+    }
+
+    // Theme toggle
+    if (themeToggleBtn) {
+        const currentTheme = localStorage.getItem('ridehub_theme') || 'light';
+        const updateThemeButton = () => {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            themeToggleBtn.innerHTML = isDark ? 
+                '☀️ <span>Light Mode</span>' : 
+                '🌙 <span>Dark Mode</span>';
+        };
+        
+        updateThemeButton();
+        
+        themeToggleBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const newTheme = isDark ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('ridehub_theme', newTheme);
+            updateThemeButton();
+            showToast(`Switched to ${newTheme} mode`, '#10b981');
+            settingsDropdown.style.display = 'none';
+        });
+    }
+
+    // Logout button in settings
+    if (logoutSettingBtn) {
+        logoutSettingBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const { signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
+            const { auth } = await import('./firebase.js');
+            await signOut(auth);
+            localStorage.removeItem('ridehub_token');
+            localStorage.removeItem('ridehub_role');
+            window.location.href = 'index.html';
+        });
+    }
+
+    // Notifications button - show booking status updates
+    if (notificationBtn) {
+        notificationBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            showNotificationsModal();
+        });
+    }
+
+    // Message button - show same as notifications
+    if (messageBtn) {
+        messageBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            showNotificationsModal();
+        });
+    }
+}
+
+// Show notifications modal with booking status updates
+async function showNotificationsModal() {
+    try {
+        const res = await api.getBookings();
+        const bookings = await res.json();
+        
+        // Filter notifications - primarily completed or upcoming bookings with important updates
+        const notifications = bookings
+            .sort((a, b) => new Date(b.startDate) - new Date(a.startDate))
+            .map(b => {
+                let notifIcon = '';
+                let notifMessage = '';
+                let notifColor = '';
+
+                if (b.status === 'COMPLETED') {
+                    notifIcon = '✅';
+                    notifMessage = `Trip to ${b.destination} completed successfully!`;
+                    notifColor = '#10b981';
+                } else if (b.status === 'ASSIGNED') {
+                    notifIcon = '🚗';
+                    notifMessage = `Driver assigned for ${b.destination}. Check vehicle details.`;
+                    notifColor = '#3b82f6';
+                } else if (b.status === 'APPROVED') {
+                    notifIcon = '✓';
+                    notifMessage = `Booking approved for ${b.destination} on ${new Date(b.startDate).toLocaleDateString()}`;
+                    notifColor = '#10b981';
+                } else if (b.status === 'PENDING') {
+                    notifIcon = '⏳';
+                    notifMessage = `Booking pending for ${b.destination}. Awaiting approval.`;
+                    notifColor = '#f59e0b';
+                }
+
+                return { icon: notifIcon, message: notifMessage, color: notifColor, booking: b };
+            });
+
+        const notificationHTML = `
+            <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 5000;">
+                <div style="background: white; border-radius: 12px; max-width: 500px; width: 90%; max-height: 70vh; overflow-y: auto; box-shadow: 0 25px 50px rgba(0,0,0,0.3);">
+                    <!-- Header -->
+                    <div style="padding: 2rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; align-items: center; gap: 0.75rem;">
+                            <span style="font-size: 1.5rem;">🔔</span>
+                            <h2 style="margin: 0; color: var(--text-primary);">Booking Notifications</h2>
+                        </div>
+                        <button class="close-notif-modal" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">×</button>
+                    </div>
+
+                    <!-- Notifications List -->
+                    <div style="padding: 1.5rem;">
+                        ${notifications.length === 0 ? `
+                            <div style="text-align: center; padding: 2rem; color: var(--text-secondary);">
+                                <div style="font-size: 2.5rem; opacity: 0.5; display: block; margin-bottom: 1rem;">📭</div>
+                                <p style="margin: 0;">No notifications yet.</p>
+                            </div>
+                        ` : `
+                            <div style="display: flex; flex-direction: column; gap: 1rem;">
+                                ${notifications.map(notif => `
+                                    <div style="display: flex; gap: 1rem; padding: 1rem; background: var(--surface-hover); border-radius: 8px; border-left: 4px solid ${notif.color};">
+                                        <div style="flex-shrink: 0;">${notif.icon}</div>
+                                        <div style="flex: 1;">
+                                            <p style="margin: 0; color: var(--text-primary); font-weight: 500;">${notif.message}</p>
+                                            <p style="margin: 0.5rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">
+                                                ${new Date(notif.booking.startDate).toLocaleDateString()} at ${new Date(notif.booking.startDate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                            </p>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        `}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        const notifContainer = document.createElement('div');
+        notifContainer.innerHTML = notificationHTML;
+        document.body.appendChild(notifContainer);
+
+        const closeBtn = notifContainer.querySelector('.close-notif-modal');
+        const modal = notifContainer.querySelector('[style*="position: fixed"]');
+
+        const closeModal = () => {
+            modal.style.opacity = '0';
+            setTimeout(() => notifContainer.remove(), 300);
+        };
+
+        closeBtn.addEventListener('click', closeModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        });
+
+        // Update notification badge count
+        const notificationBadge = document.getElementById('notificationBadge');
+        if (notificationBadge) {
+            const importantCount = notifications.filter(n => n.booking.status !== 'COMPLETED').length;
+            notificationBadge.textContent = importantCount;
+        }
+    } catch (error) {
+        console.error('Error loading notifications:', error);
+        showToast('Failed to load notifications', '#ef4444');
+    }
+}
 
 export async function renderTouristUI(sidebar, content, section = 'dashboard') {
     sidebar.innerHTML = `
         ${createNavItem('Dashboard', icons.dashboard, 'dashboard', section === 'dashboard')}
-        ${createNavItem('Bookings', icons.book, 'bookings', section === 'bookings')}
+        ${createNavItem('Book a Ride', icons.book, 'bookings', section === 'bookings')}
+        ${createNavItem('Explore Kenya', '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>', 'discover', section === 'discover')}
         ${createNavItem('Ratings & Reviews', '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 10.26 23.77 11.46 17.88 17.01 19.54 25.63 12 21.35 4.46 25.63 6.12 17.01 0.23 11.46 8.91 10.26 12 2"/></svg>', 'feedback', section === 'feedback')}
         ${createNavItem('Logout', icons.logout, null, false, true)}
     `;
@@ -22,16 +263,32 @@ export async function renderTouristUI(sidebar, content, section = 'dashboard') {
                 renderTouristUI(sidebar, content, 'bookings');
             }
 
+            if (targetSection === 'discover') {
+                renderTouristUI(sidebar, content, 'discover');
+            }
+
             if (targetSection === 'feedback') {
                 renderTouristUI(sidebar, content, 'feedback');
             }
         });
     });
 
+    // Attach logout listener
+    const logoutBtn = sidebar.querySelector('#logoutBtn');
+    attachLogoutListener(logoutBtn);
+
+    // Initialize profile modal
+    initializeProfileModal();
+    
+    // Setup menu bar events
+    setupMenuBarEvents();
+
     if (section === 'dashboard') {
         await renderTouristDashboardView(sidebar, content);
     } else if (section === 'bookings') {
         await renderTouristBookingsView(sidebar, content);
+    } else if (section === 'discover') {
+        await renderTouristDiscoverView(sidebar, content);
     } else if (section === 'feedback') {
         await renderTouristFeedbackView(sidebar, content);
     }
@@ -41,12 +298,26 @@ async function renderTouristDashboardView(sidebar, content) {
     content.innerHTML = `<div style="padding:2rem;text-align:center;">Loading Tourist Dashboard...</div>`;
 
     try {
+        // Fetch profile data
+        const token = localStorage.getItem('ridehub_token');
+        const profileRes = await fetch('http://localhost:5202/api/User/me', {
+            headers: {
+                "Authorization": `Bearer ${token}`
+            }
+        });
+        const profileData = await profileRes.json();
+        const profile = profileData.data || {};
+
         const res = await api.getBookings();
         const bookings = await res.json();
         showToast('Bookings loaded', '#4f46e5');
 
         const pendingCount = bookings.filter(b => b.status === "PENDING" || b.status === "APPROVED").length;
         const historyCount = bookings.filter(b => b.status === "COMPLETED" || b.status === "CANCELLED").length;
+        const completed = bookings.filter(b => b.status === "COMPLETED").length;
+        const totalTrips = bookings.length;
+        const uniquePlaces = new Set(bookings.filter(b => b.status === "COMPLETED").map(b => b.destination).filter(d => d)).size;
+        const userRating = calculateUserRating(bookings);
 
         let tableHtml = '';
         if (bookings.length === 0) {
@@ -68,51 +339,146 @@ async function renderTouristDashboardView(sidebar, content) {
         }
 
         content.innerHTML = `
-            <div class="page-header">
-                <h2>Welcome to RideHub</h2>
-                <button class="btn btn-primary" id="newBookingBtn">+ New Booking</button>
-            </div>
-
-            <div class="metrics-grid">
-                <div class="metric-card">
-                    <div class="metric-icon">${icons.book}</div>
-                    <div class="metric-info">
-                        <h3>Upcoming Trips</h3>
-                        <div class="value">${pendingCount}</div>
-                    </div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-icon">${icons.dashboard}</div>
-                    <div class="metric-info">
-                        <h3>History Logs</h3>
-                        <div class="value">${historyCount}</div>
+            <!-- Welcome Hero Section -->
+            <div class="card-modern animate-fade-in-up" style="background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; margin-bottom: 2rem; border: none;">
+                <div style="padding: 2rem;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+                        <div>
+                            <h1 style="font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem;">Welcome back, ${(profile.fullName || 'Traveler').split(' ')[0]}! 👋</h1>
+                            <p style="opacity: 0.9; font-size: 1.125rem; margin: 0;">Ready for your next adventure? Let's find the perfect ride for you.</p>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 2.5rem; font-weight: 700; color: white;">${totalTrips}</div>
+                            <div style="font-size: 0.875rem; opacity: 0.8;">Total Trips</div>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div class="table-container">
-                <div class="table-header">
-                    <h3 style="font-size: 1rem; font-weight: 600;">My Recent Bookings</h3>
+            <!-- Quick Stats Grid -->
+            <div class="metrics-grid animate-fade-in-up">
+                <div class="metric-card" style="background: linear-gradient(135deg, var(--success), #10b981); color: white; border: none;">
+                    <div class="metric-icon" style="background: rgba(255,255,255,0.2);">
+                        ${icons.check}
+                    </div>
+                    <div class="metric-info">
+                        <h3 style="color: rgba(255,255,255,0.9);">Completed Trips</h3>
+                        <div class="value" style="color: white;">${completed}</div>
+                    </div>
                 </div>
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Start Date</th>
-                            <th>Destination</th>
-                            <th>Type</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${tableHtml}
-                    </tbody>
-                </table>
+                <div class="metric-card" style="background: linear-gradient(135deg, var(--warning), #f59e0b); color: white; border: none;">
+                    <div class="metric-icon" style="background: rgba(255,255,255,0.2);">
+                        ${icons.clock}
+                    </div>
+                    <div class="metric-info">
+                        <h3 style="color: rgba(255,255,255,0.9);">Upcoming</h3>
+                        <div class="value" style="color: white;">${pendingCount}</div>
+                    </div>
+                </div>
+                <div class="metric-card" style="background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; border: none;">
+                    <div class="metric-icon" style="background: rgba(255,255,255,0.2);">
+                        ${icons.star}
+                    </div>
+                    <div class="metric-info">
+                        <h3 style="color: rgba(255,255,255,0.9);">Your Rating</h3>
+                        <div class="value" style="color: white;">${userRating} ⭐</div>
+                    </div>
+                </div>
+                <div class="metric-card" style="background: linear-gradient(135deg, #8b5cf6, #a855f7); color: white; border: none;">
+                    <div class="metric-icon" style="background: rgba(255,255,255,0.2);">
+                        ${icons.location}
+                    </div>
+                    <div class="metric-info">
+                        <h3 style="color: rgba(255,255,255,0.9);">Places Visited</h3>
+                        <div class="value" style="color: white;">${uniquePlaces}</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Bookings -->
+            <div class="card-modern animate-fade-in-up" style="margin-top: 3rem;">
+                <div class="table-header" style="border-bottom: 1px solid var(--border-color); padding: 1.5rem;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 2rem; flex-wrap: wrap;">
+                        <div>
+                            <h3 style="font-size: 1.25rem; font-weight: 600; margin: 0; color: var(--text-primary);">${icons.book} Recent Bookings</h3>
+                            <p style="margin: 0.25rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">Your latest ride reservations</p>
+                        </div>
+                        <button class="btn-modern btn-primary-modern" id="newBookingBtn" style="font-size: 0.875rem; padding: 0.75rem 1.5rem; border-radius: 8px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap;">
+                            ${icons.plus} New Booking
+                        </button>
+                    </div>
+                </div>
+                <div style="padding: 0;">
+                    ${bookings.length === 0 ? `
+                        <div style="text-align: center; padding: 3rem 1.5rem; color: var(--text-secondary);">
+                            <div style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;">${icons.book}</div>
+                            <h4 style="margin-bottom: 0.5rem; color: var(--text-primary);">No bookings yet</h4>
+                            <p style="margin-bottom: 1.5rem;">Start your journey by booking your first ride</p>
+                            <button class="btn-modern btn-primary-modern" id="newBookingBtnEmpty">
+                                ${icons.plus} Book Your First Ride
+                            </button>
+                        </div>
+                    ` : `
+                        <div class="table-container" style="border: none; box-shadow: none; margin: 0;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th style="padding-left: 1.5rem;">${icons.calendar} Date</th>
+                                        <th>${icons.location} Destination</th>
+                                        <th>${icons.car} Vehicle</th>
+                                        <th style="text-align: center;">Status</th>
+                                        <th style="padding-right: 1.5rem; text-align: center;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${bookings.slice(0, 5).map(b => `
+                                        <tr>
+                                            <td style="padding-left: 1.5rem;">
+                                                <div style="font-weight: 600; color: var(--text-primary);">${new Date(b.startDate).toLocaleDateString()}</div>
+                                                <div style="font-size: 0.75rem; color: var(--text-secondary);">${new Date(b.startDate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                                            </td>
+                                            <td>
+                                                <div style="font-weight: 500; color: var(--text-primary);">${b.destination || 'Custom Location'}</div>
+                                            </td>
+                                            <td>
+                                                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                                    <span style="color: var(--text-secondary); font-size: 0.9rem;">${getVehicleIcon(b.bookingType)}</span>
+                                                    <span style="text-transform: capitalize; font-weight: 500;">${b.bookingType}</span>
+                                                </div>
+                                            </td>
+                                            <td style="text-align: center;">
+                                                <div style="display: flex; align-items: center; gap: 0.5rem; justify-content: center;">
+                                                    ${getStatusIcon(b.status)}
+                                                    <span class="badge badge-${b.status.toLowerCase()}" style="font-size: 0.75rem; padding: 0.25rem 0.625rem; white-space: nowrap;">
+                                                        ${b.status}
+                                                    </span>
+                                                </div>
+                                            </td>
+                                            <td style="padding-right: 1.5rem; text-align: center;">
+                                                ${(b.status === 'PENDING' || b.status === 'APPROVED')
+                                                ? `<button class="btn-modern btn-secondary-modern cancel-btn" data-id="${b.id}" style="font-size: 0.75rem; padding: 0.4rem 0.75rem; cursor: pointer; display: flex; align-items: center; gap: 0.4rem;" title="Cancel Booking">
+                                                    🗑️ Cancel
+                                                  </button>`
+                                                : b.status === 'COMPLETED' ?
+                                                `<button class="btn-modern btn-primary-modern" data-id="${b.id}" style="font-size: 0.75rem; padding: 0.4rem 0.75rem; cursor: pointer; background: #10b981; border: none; display: flex; align-items: center; gap: 0.4rem;" title="Leave Feedback">
+                                                    ⭐ Feedback
+                                                 </button>`
+                                                : `<span style="font-size: 0.75rem; color: var(--text-muted); display: flex; align-items: center; gap: 0.4rem; justify-content: center;">🔒 Locked</span>`}
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `}
+                </div>
             </div>
         `;
 
         content.querySelectorAll('.cancel-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
                 const id = e.target.getAttribute('data-id');
                 if (confirm("Are you sure you want to cancel this booking?")) {
                     await api.cancelBooking(id);
@@ -122,12 +488,30 @@ async function renderTouristDashboardView(sidebar, content) {
             });
         });
 
-        const newBookingBtn = document.getElementById('newBookingBtn');
-        if (newBookingBtn) {
-            newBookingBtn.addEventListener('click', () => {
-                renderTouristUI(sidebar, content, 'bookings');
+        // Add event listener for feedback buttons on completed bookings
+        content.querySelectorAll('button[data-id]:not(.cancel-btn)').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const bookingId = e.currentTarget.getAttribute('data-id');
+                const booking = bookings.find(b => b.id === bookingId);
+                if (booking) {
+                    showPaymentAndRatingModal(booking, null, null, () => {
+                        renderTouristUI(sidebar, content, 'dashboard');
+                    });
+                }
             });
-        }
+        });
+
+        const newBookingBtn = document.getElementById('newBookingBtn');
+        const newBookingBtnEmpty = document.getElementById('newBookingBtnEmpty');
+        [newBookingBtn, newBookingBtnEmpty].forEach(btn => {
+            if (btn) {
+                btn.addEventListener('click', () => {
+                    renderTouristUI(sidebar, content, 'bookings');
+                });
+            }
+        });
     } catch (e) {
         console.error(e);
         content.innerHTML = `<div style="padding:2rem;color:red;">Error loading dashboard data.</div>`;
@@ -135,153 +519,191 @@ async function renderTouristDashboardView(sidebar, content) {
 }
 
 async function renderTouristBookingsView(sidebar, content) {
-    // Get booking stats
-    const res = await api.getBookings();
-    const bookings = await res.json();
-    const totalTrips = bookings.length;
-    const upcoming = bookings.filter(b => b.status === "PENDING" || b.status === "APPROVED").length;
-    const completed = bookings.filter(b => b.status === "COMPLETED").length;
-
-    // fetch available vehicles to show categories
-    let vehicleSummary = { sedan: 0, suv: 0, van: 0, bike: 0 };
     try {
-        const vres = await api.getVehicles();
-        if (vres.ok) {
-            const vehicles = await vres.json();
-            vehicles.forEach(v => {
-                if (v.vehicleType && vehicleSummary.hasOwnProperty(v.vehicleType.toLowerCase())) {
-                    if (v.isAvailable) vehicleSummary[v.vehicleType.toLowerCase()]++;
-                }
-            });
-        }
-    } catch { };
+        // Get booking stats
+        const res = await api.getBookings();
+        const bookings = await res.json();
+        const totalTrips = bookings.length;
+        const upcoming = bookings.filter(b => b.status === "PENDING" || b.status === "APPROVED").length;
+        const completed = bookings.filter(b => b.status === "COMPLETED").length;
 
-    content.innerHTML = `
-        <div class="page-header">
-            <h2>RideHub Dashboard</h2>
+        // fetch available vehicles to show categories
+        let vehicleSummary = { sedan: 0, suv: 0, van: 0, bike: 0 };
+        try {
+            const vres = await api.getVehicles();
+            if (vres.ok) {
+                const vehicles = await vres.json();
+                vehicles.forEach(v => {
+                    if (v.vehicleType && vehicleSummary.hasOwnProperty(v.vehicleType.toLowerCase())) {
+                        if (v.isAvailable) vehicleSummary[v.vehicleType.toLowerCase()]++;
+                    }
+                });
+            }
+        } catch { };
+
+        content.innerHTML = `
+        <div class="page-header animate-fade-in-up">
+            <div>
+                <h2 style="margin: 0; color: var(--text-primary);">${icons.book} Book Your Ride</h2>
+                <p style="margin: 0.5rem 0 0; color: var(--text-secondary);">Choose your destination and vehicle type</p>
+            </div>
         </div>
 
         <!-- Stats Bar -->
-        <div class="stats-bar">
+        <div class="stats-bar animate-fade-in-up" style="margin-bottom: 2rem;">
             <div class="stat-item">
-                <div class="stat-value">${totalTrips}</div>
+                <div class="stat-value" style="color: var(--success);">${totalTrips}</div>
                 <div class="stat-label">Total Trips</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value">${upcoming}</div>
+                <div class="stat-value" style="color: var(--primary-color);">${upcoming}</div>
                 <div class="stat-label">Upcoming</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value">${completed}</div>
+                <div class="stat-value" style="color: var(--warning);">${completed}</div>
                 <div class="stat-label">Completed</div>
             </div>
         </div>
 
-        <!-- Vehicle Summary -->
-        <div class="stats-bar" style="margin-top:1rem;">
+        <!-- Vehicle Availability -->
+        <div class="stats-bar animate-fade-in-up" style="margin-bottom: 2rem; background: var(--surface-color); border: 1px solid var(--border-color);">
             <div class="stat-item">
-                <div class="stat-value">${vehicleSummary.sedan}</div>
-                <div class="stat-label">Sedans Avl</div>
+                <div class="stat-value" style="color: ${vehicleSummary.sedan > 0 ? 'var(--success)' : 'var(--danger)'};">${vehicleSummary.sedan}</div>
+                <div class="stat-label">${icons.sedan} Sedans</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value">${vehicleSummary.suv}</div>
-                <div class="stat-label">SUVs Avl</div>
+                <div class="stat-value" style="color: ${vehicleSummary.suv > 0 ? 'var(--success)' : 'var(--danger)'};">${vehicleSummary.suv}</div>
+                <div class="stat-label">${icons.suv} SUVs</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value">${vehicleSummary.van}</div>
-                <div class="stat-label">Vans Avl</div>
+                <div class="stat-value" style="color: ${vehicleSummary.van > 0 ? 'var(--success)' : 'var(--danger)'};">${vehicleSummary.van}</div>
+                <div class="stat-label">${icons.van} Vans</div>
             </div>
             <div class="stat-item">
-                <div class="stat-value">${vehicleSummary.bike}</div>
-                <div class="stat-label">Bikes Avl</div>
+                <div class="stat-value" style="color: ${vehicleSummary.bike > 0 ? 'var(--success)' : 'var(--danger)'};">${vehicleSummary.bike}</div>
+                <div class="stat-label">${icons.bike} Bikes</div>
             </div>
         </div>
 
         <!-- Booking Container -->
-        <div class="booking-container">
+        <div class="booking-container animate-fade-in-up">
             <!-- Form Section -->
             <div class="booking-form-section">
-                <div class="form-card">
-                    <h3 style="text-align: center; margin-bottom: 2rem; color: var(--text-primary);">Create New Booking</h3>
+                <div class="card-modern">
+                    <div style="padding: 2rem;">
+                        <h3 style="text-align: center; margin-bottom: 2rem; color: var(--text-primary); font-size: 1.5rem; font-weight: 600;">
+                            ${icons.map} Create New Booking
+                        </h3>
 
-                    <form id="bookingForm">
-                        <div class="form-grid">
-                            <div class="form-group">
-                                <label>📍 Pickup Location</label>
-                                <div style="display: flex; gap: 1rem; align-items: center;">
-                                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
-                                        <input type="radio" name="pickupType" value="airport" checked style="margin: 0;">
-                                        JKIA Airport
+                        <form id="bookingForm">
+                            <div class="form-grid">
+                                <div class="form-group-modern">
+                                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                        ${icons.location} Pickup Location
                                     </label>
-                                    <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal;">
-                                        <input type="radio" name="pickupType" value="other" style="margin: 0;">
-                                        Other Location
-                                    </label>
+                                    <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 0.5rem;">
+                                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                                            <input type="radio" name="pickupType" value="airport" checked style="margin: 0;">
+                                            ✈️ JKIA Airport
+                                        </label>
+                                        <label style="display: flex; align-items: center; gap: 0.5rem; font-weight: normal; cursor: pointer;">
+                                            <input type="radio" name="pickupType" value="other" style="margin: 0;">
+                                            🏠 Other Location
+                                        </label>
+                                    </div>
+                                    <input type="text" id="pickupLocation" placeholder="Enter pickup address" class="input-modern"
+                                           style="margin-top: 0.5rem; display: none;" />
                                 </div>
-                                <input type="text" id="pickupLocation" placeholder="Enter pickup address" class="form-control" 
-                                       style="margin-top: 0.5rem; display: none;" />
+
+                                <div class="form-group-modern">
+                                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                        ${icons.location} Destination
+                                    </label>
+                                    <select id="destination" class="input-modern">
+                                        <option value="">Select destination</option>
+                                        <option value="hilton">🏨 Hilton Hotel Nairobi</option>
+                                        <option value="maasai-mara">🦁 Maasai Mara Safari</option>
+                                        <option value="kempinski">🏨 Kempinski Hotel</option>
+                                        <option value="oloisereni">🏨 Oloisereni Hotel</option>
+                                        <option value="nairobi-national-park">🦁 Nairobi National Park</option>
+                                        <option value="lake-naivasha">🌊 Lake Naivasha</option>
+                                        <option value="mount-kenya">⛰️ Mount Kenya</option>
+                                        <option value="mombasa-beach">🏖️ Mombasa Beach</option>
+                                        <option value="hells-gate">🔥 Hell's Gate National Park</option>
+                                        <option value="serena-hotel">🏨 Serena Hotel</option>
+                                        <option value="safari-park-hotel">🏨 Safari Park Hotel</option>
+                                        <option value="karen-blixen-museum">🏛️ Karen Blixen Museum</option>
+                                        <option value="giraffe-centre">🦒 Giraffe Centre</option>
+                                        <option value="david-sheldrick-sanctuary">🐘 David Sheldrick Wildlife Trust</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-group-modern">
+                                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                        ${icons.calendar} Travel Date & Time
+                                    </label>
+                                    <input type="datetime-local" id="scheduledDate" required class="input-modern" />
+                                    <small style="color: var(--text-secondary); margin-top: 0.25rem; display: block;">Must be at least 30 minutes from now</small>
+                                </div>
+
+                                <div class="form-group-modern">
+                                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                        ${icons.users} Passengers
+                                    </label>
+                                    <input type="number" id="passengerCount" min="1" max="10" value="1" class="input-modern" />
+                                </div>
+
+                                <div class="form-group-modern">
+                                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                        ${icons.car} Vehicle Type
+                                    </label>
+                                    <select id="vehicleType" class="input-modern">
+                                        <option value="sedan">${icons.sedan} Sedan - Comfortable for 1-4 passengers</option>
+                                        <option value="suv">${icons.suv} SUV - Spacious for 1-6 passengers</option>
+                                        <option value="van">${icons.van} Van - Perfect for groups up to 10</option>
+                                        <option value="bike">${icons.bike} Bike - Quick rides for 1-2 passengers</option>
+                                    </select>
+                                </div>
+
+                                <div class="form-group-modern">
+                                    <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                        ${icons.map} Distance
+                                    </label>
+                                    <input type="text" id="distanceDisplay" disabled placeholder="Auto calculated" class="input-modern" />
+                                </div>
                             </div>
 
-                            <div class="form-group">
-                                <label>🏁 Destination</label>
-                                <select id="destination" class="form-control">
-                                    <option value="">Select destination</option>
-                                    <option value="hilton">🏨 Hilton Hotel Nairobi</option>
-                                    <option value="maasai-mara">🦁 Maasai Mara Safari</option>
-                                    <option value="kempinski">🏨 Kempinski Hotel</option>
-                                    <option value="oloisereni">🏨 Oloisereni Hotel</option>
-                                </select>
+                            <div class="form-group-modern">
+                                <label style="display: flex; align-items: center; gap: 0.5rem;">
+                                    ${icons.settings} Notes (Optional)
+                                </label>
+                                <textarea id="notes" rows="3" placeholder="Special instructions, accessibility needs, or preferences..." class="input-modern"></textarea>
                             </div>
 
-                            <div class="form-group">
-                                <label>📅 Travel Date</label>
-                                <input type="datetime-local" id="scheduledDate" required class="form-control" />
+                            <!-- Price and Time Display -->
+                            <div style="text-align: center; margin: 2rem 0; padding: 1.5rem; background: linear-gradient(135deg, var(--primary-light), rgba(79, 70, 229, 0.1)); border-radius: var(--radius-lg); border: 1px solid var(--border-light);">
+                                <div id="timeEstimate" style="margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.875rem;">
+                                    ${icons.clock} Estimated Time: -- min
+                                </div>
+                                <div id="priceDisplay" class="price-display" style="font-size: 2rem; font-weight: 700; color: var(--primary-color);">
+                                    ${icons.money} Estimated Price: KSH --
+                                </div>
+                                <div style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted);">
+                                    * Final price may vary based on traffic and demand
+                                </div>
                             </div>
 
-                            <div class="form-group">
-                                <label>👤 Passengers</label>
-                                <input type="number" id="passengerCount" min="1" max="10" value="1" class="form-control" />
-                            </div>
-
-                            <div class="form-group">
-                                <label>🚗 Vehicle Type</label>
-                                <select id="vehicleType" class="form-control">
-                                    <option value="sedan">🚗 Sedan</option>
-                                    <option value="suv">🚙 SUV</option>
-                                    <option value="van">🚐 Van</option>
-                                    <option value="bike">🏍 Bike</option>
-                                </select>
-                            </div>
-
-                            <div class="form-group">
-                                <label>📏 Distance</label>
-                                <input type="text" id="distanceDisplay" disabled placeholder="Auto calculated" class="form-control" />
-                            </div>
-                        </div>
-
-                        <div class="form-group">
-                            <label>📝 Notes (Optional)</label>
-                            <textarea id="notes" rows="3" placeholder="Special instructions..." class="form-control"></textarea>
-                        </div>
-
-                        <!-- Price and Time Display -->
-                        <div style="text-align: center; margin: 1.5rem 0;">
-                            <div id="timeEstimate" style="margin-bottom: 0.5rem; color: var(--text-secondary);">
-                                Estimated Time: -- min
-                            </div>
-                            <div id="priceDisplay" class="price-display">
-                                Estimated Price: KSH --
-                            </div>
-                        </div>
-
-                        <button type="submit" class="btn btn-primary">Create Booking</button>
-                    </form>
+                            <button type="submit" class="btn-modern btn-primary-modern" id="bookingSubmitBtn" style="font-size: 0.9rem; padding: 0.75rem 2rem; width: auto;">
+                                ${icons.check} Create Booking
+                            </button>
+                        </form>
+                    </div>
                 </div>
             </div>
 
             <!-- Map Section -->
             <div class="map-section">
-                <div id="map"></div>
+                <div id="map" style="border-radius: var(--radius-xl); box-shadow: var(--shadow-lg);"></div>
             </div>
         </div>
     `;
@@ -303,8 +725,24 @@ async function renderTouristBookingsView(sidebar, content) {
         hilton: { lat: -1.2864, lng: 36.8172, name: "Hilton Hotel Nairobi" },
         "maasai-mara": { lat: -1.4061, lng: 35.0081, name: "Maasai Mara Safari" },
         kempinski: { lat: -1.2864, lng: 36.8172, name: "Kempinski Hotel" },
-        oloisereni: { lat: -1.2864, lng: 36.8172, name: "Oloisereni Hotel" }
+        oloisereni: { lat: -1.2864, lng: 36.8172, name: "Oloisereni Hotel" },
+        "nairobi-national-park": { lat: -1.3521, lng: 36.7949, name: "Nairobi National Park" },
+        "lake-naivasha": { lat: -0.7693, lng: 36.4262, name: "Lake Naivasha" },
+        "mount-kenya": { lat: 0.1616, lng: 37.2986, name: "Mount Kenya" },
+        "mombasa-beach": { lat: -4.0435, lng: 39.6682, name: "Mombasa Beach" },
+        "hells-gate": { lat: -0.8188, lng: 36.3688, name: "Hell's Gate National Park" },
+        "serena-hotel": { lat: -1.3689, lng: 36.8034, name: "Serena Hotel" },
+        "safari-park-hotel": { lat: -1.3866, lng: 36.7747, name: "Safari Park Hotel" },
+        "karen-blixen-museum": { lat: -1.4165, lng: 36.7288, name: "Karen Blixen Museum" },
+        "giraffe-centre": { lat: -1.3159, lng: 36.8097, name: "Giraffe Centre" },
+        "david-sheldrick-sanctuary": { lat: -1.3521, lng: 36.7949, name: "David Sheldrick Wildlife Trust" }
     };
+
+    // Set minimum datetime to 30 minutes from now
+    const now = new Date();
+    now.setMinutes(now.getMinutes() + 30);
+    const minDateTime = now.toISOString().slice(0, 16);
+    document.getElementById('scheduledDate').min = minDateTime;
 
     // Handle pickup type change
     document.querySelectorAll('input[name="pickupType"]').forEach(radio => {
@@ -448,23 +886,242 @@ async function renderTouristBookingsView(sidebar, content) {
             pickupLocation = document.getElementById("pickupLocation").value;
         }
 
+        const vehicleType = document.getElementById("vehicleType").value;
+        const scheduledDate = new Date(document.getElementById("scheduledDate").value);
+        const now = new Date();
+
+        // Validate that scheduled date is at least 30 minutes in the future
+        const minBookingTime = new Date(now.getTime() + 30 * 60000);
+        if (scheduledDate <= minBookingTime) {
+            showToast("Travel date must be at least 30 minutes in the future", "#ef4444");
+            return;
+        }
+
         const formData = {
             pickupLocation: pickupLocation,
             destination: locations[document.getElementById("destination").value]?.name || document.getElementById("destination").value,
-            scheduledDate: document.getElementById("scheduledDate").value,
+            scheduledDate: new Date(document.getElementById("scheduledDate").value).toISOString(),
             passengerCount: parseInt(document.getElementById("passengerCount").value),
-            vehicleType: document.getElementById("vehicleType").value,
+            vehicleType: vehicleType,
             notes: document.getElementById("notes").value,
             bookingType: "Standard"
         };
 
         try {
-            await api.createBooking(formData);
-            showToast("Booking created successfully!", "success");
-            renderTouristUI(sidebar, content, 'dashboard');
+            const bookingRes = await api.createBooking(formData);
+            
+            if (!bookingRes.ok) {
+                const errorData = await bookingRes.json();
+                throw new Error(errorData.message || `API Error ${bookingRes.status}: Failed to create booking`);
+            }
+
+            const booking = await bookingRes.json();
+            
+            if (!booking.id && !booking.data?.id) {
+                throw new Error('Invalid booking response - no booking ID received');
+            }
+
+            const bookingId = booking.id || booking.data?.id;
+            
+            // Fetch full booking details with assigned driver and vehicle
+            const bookingDetailsRes = await api.getBookings();
+            if (!bookingDetailsRes.ok) {
+                throw new Error('Failed to fetch booking details');
+            }
+
+            const allBookings = await bookingDetailsRes.json();
+            const fullBooking = allBookings.find(b => b.id === bookingId);
+
+            // Show payment confirmation + rating modal instead of just booking confirmation
+            showPaymentAndRatingModal(fullBooking || booking, sidebar, content, () => {
+                renderTouristUI(sidebar, content, 'dashboard');
+            });
         } catch (error) {
             console.error("Booking creation error:", error);
-            showToast("Failed to create booking. Please try again.", "error");
+            showToast(error.message || "Failed to create booking. Please try again.", "#ef4444");
+        }
+    });
+    } catch (e) {
+        console.error(e);
+        content.innerHTML = `<div style="padding:2rem;color:red;">Error loading bookings data.</div>`;
+    }
+}
+
+// Booking Confirmation Modal
+function showBookingConfirmation(booking, sidebar, content) {
+    // Use API data if available, otherwise show placeholder
+    const driver = booking.assignedDriver || {
+        name: "Driver Assignment Pending",
+        rating: 0,
+        phone: "N/A",
+        profileImage: ""
+    };
+
+    const vehicle = booking.assignedVehicle || {
+        make: "Vehicle",
+        model: "Assignment Pending",
+        color: "N/A",
+        numberPlate: "N/A",
+        image: "https://images.unsplash.com/photo-1567818735868-e71b99932e29?w=400&h=250&fit=crop"
+    };
+
+    const pickupTime = new Date(booking.scheduledDate || new Date());
+    const timeStr = pickupTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const dateStr = pickupTime.toLocaleDateString();
+    const vehicleName = `${vehicle.make || ''} ${vehicle.model || ''}`.trim() || vehicle.name || 'Vehicle';
+
+    const confirmationHTML = `
+        <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 3000; padding: 1rem;">
+            <div style="background: white; border-radius: 16px; max-width: 500px; width: 100%; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3); animation: slideUp 0.4s ease-out;">
+                <!-- Success Header -->
+                <div style="padding: 2rem 2rem 1.5rem; flex-shrink: 0; border-bottom: 1px solid var(--border-color);">
+                    <div style="text-align: center;">
+                        <div style="width: 60px; height: 60px; background: linear-gradient(135deg, var(--success), #10b981); border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 1rem; box-shadow: 0 8px 16px rgba(16, 185, 129, 0.3);">
+                            <i class="fas fa-check" style="color: white; font-size: 28px;"></i>
+                        </div>
+                        <h2 style="margin: 0 0 0.5rem; color: var(--text-primary); font-size: 1.5rem; font-weight: 700;">Booking Confirmed!</h2>
+                        <p style="margin: 0; color: var(--text-secondary); font-size: 0.95rem;">Your ride has been successfully scheduled</p>
+                    </div>
+                </div>
+
+                <!-- Scrollable Content -->
+                <div style="flex: 1; overflow-y: auto; padding: 0 2rem; scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.2) transparent;">
+                    <div style="padding: 1.5rem 0;">
+                        <!-- Pickup Details -->
+                        <div style="background: #f8fafc; border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; border-left: 4px solid var(--primary-color);">
+                            <div style="margin-bottom: 1rem;">
+                                <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em;">Pickup Time</p>
+                                <p style="margin: 0; color: var(--text-primary); font-size: 1.125rem; font-weight: 600;">${timeStr} - ${dateStr}</p>
+                            </div>
+                            <div style="margin-bottom: 0;">
+                                <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em;">Location</p>
+                                <p style="margin: 0; color: var(--text-primary); font-weight: 500;">📍 ${booking.pickupLocation || 'TBD'} → ${booking.destination || 'TBD'}</p>
+                            </div>
+                        </div>
+
+                        <!-- Vehicle Details -->
+                        <div style="margin-bottom: 1.5rem;">
+                            <p style="margin: 0 0 1rem; color: var(--text-secondary); font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Your Vehicle</p>
+                            <div style="background: white; border: 2px solid var(--border-color); border-radius: 12px; overflow: hidden;">
+                                <img src="${vehicle.image || 'https://images.unsplash.com/photo-1567818735868-e71b99932e29?w=400&h=250&fit=crop'}" alt="${vehicleName}" style="width: 100%; height: 150px; object-fit: cover;">
+                                <div style="padding: 1rem;">
+                                    <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 0.75rem;">
+                                        <div>
+                                            <h4 style="margin: 0 0 0.25rem; color: var(--text-primary); font-weight: 600; font-size: 1.1rem;">${vehicleName}</h4>
+                                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.875rem;">Color: ${vehicle.color || 'N/A'}</p>
+                                        </div>
+                                        <div style="background: var(--primary-light); color: var(--primary-color); padding: 0.5rem 0.75rem; border-radius: 6px; font-weight: 600; font-size: 0.875rem;">
+                                            ${vehicle.numberPlate || 'TBD'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Driver Details -->
+                        <div style="margin-bottom: 1.5rem;">
+                            <p style="margin: 0 0 1rem; color: var(--text-secondary); font-size: 0.875rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600;">Your Driver</p>
+                            <div style="display: flex; align-items: center; gap: 1rem; background: var(--surface-color); border: 2px solid var(--border-color); border-radius: 12px; padding: 1rem;">
+                                <div style="width: 50px; height: 50px; border-radius: 50%; background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); display: flex; align-items: center; justify-content: center; color: white; font-weight: 600; font-size: 1.25rem; flex-shrink: 0;">
+                                    ${driver.profileImage ? `<img src="${driver.profileImage}" style="width: 100%; height: 100%; border-radius: 50%; object-fit: cover;">` : driver.name.charAt(0)}
+                                </div>
+                                <div style="flex: 1; min-width: 0;">
+                                    <h4 style="margin: 0 0 0.25rem; color: var(--text-primary); font-weight: 600;">${driver.name || 'Assigning Driver...'}</h4>
+                                    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                                        ${driver.rating ? `<span style="color: var(--warning); font-size: 0.875rem;">⭐ ${driver.rating}</span>` : ''}
+                                        ${driver.phone && driver.phone !== 'N/A' ? `<a href="tel:${driver.phone}" style="color: var(--primary-color); font-weight: 500; text-decoration: none; font-size: 0.875rem;">📞 Call Driver</a>` : '<span style="color: var(--text-secondary); font-size: 0.875rem;">Phone pending</span>'}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Passengers Info -->
+                        <div style="background: #f8fafc; border-radius: 12px; padding: 1rem; margin-bottom: 0;">
+                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.875rem;"><strong>${booking.passengerCount || 1}</strong> passenger(s) booked</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Fixed Footer -->
+                <div style="padding: 1.5rem 2rem 2rem; flex-shrink: 0; border-top: 1px solid var(--border-color);">
+                    <!-- Action Buttons -->
+                    <div style="display: flex; gap: 1rem; margin-bottom: 1rem;">
+                        <button class="btn-modern btn-primary-modern" style="flex: 1; padding: 0.75rem;" id="confirmOkBtn">
+                            Got It!
+                        </button>
+                        <button class="btn-modern btn-secondary-modern" style="flex: 1; padding: 0.75rem;" id="shareBtn">
+                            <i class="fas fa-share-alt"></i> Share
+                        </button>
+                    </div>
+
+                    <p style="margin: 0; text-align: center; color: var(--text-secondary); font-size: 0.8rem;">
+                        Redirecting to dashboard in <span id="countdown">4</span>s
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <style>
+            /* Custom scrollbar styling */
+            div[style*="overflow-y: auto"]::-webkit-scrollbar {
+                width: 6px;
+            }
+            div[style*="overflow-y: auto"]::-webkit-scrollbar-track {
+                background: transparent;
+            }
+            div[style*="overflow-y: auto"]::-webkit-scrollbar-thumb {
+                background: rgba(0, 0, 0, 0.2);
+                border-radius: 3px;
+            }
+            div[style*="overflow-y: auto"]::-webkit-scrollbar-thumb:hover {
+                background: rgba(0, 0, 0, 0.3);
+            }
+            @keyframes slideUp {
+                from {
+                    opacity: 0;
+                    transform: translateY(30px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateY(0);
+                }
+            }
+        </style>
+    `;
+
+    // Add confirmation to DOM
+    const container = document.createElement('div');
+    container.innerHTML = confirmationHTML;
+    document.body.appendChild(container);
+
+    // Countdown timer
+    let count = 4;
+    const countdownSpan = document.getElementById('countdown');
+    const interval = setInterval(() => {
+        count--;
+        if (countdownSpan) countdownSpan.textContent = count;
+        if (count === 0) clearInterval(interval);
+    }, 1000);
+
+    // Button handlers
+    document.getElementById('confirmOkBtn').addEventListener('click', () => {
+        container.remove();
+        clearInterval(interval);
+        renderTouristUI(sidebar, content, 'dashboard');
+    });
+
+    document.getElementById('shareBtn').addEventListener('click', () => {
+        const shareText = `I just booked a ride on RideHub! 🚗\n\n🕐 Pickup: ${timeStr}\n📍 ${booking.pickupLocation} → ${booking.destination}\n🚙 Vehicle: ${vehicleName}\n\nDownload RideHub now!`;
+        
+        if (navigator.share) {
+            navigator.share({
+                title: 'My RideHub Booking',
+                text: shareText
+            });
+        } else {
+            // Fallback - copy to clipboard
+            navigator.clipboard.writeText(shareText);
+            showToast('Details copied to clipboard!', '#10b981');
         }
     });
 }
@@ -606,5 +1263,148 @@ async function renderTouristFeedbackView(sidebar, content) {
     } catch (e) {
         console.error(e);
         content.innerHTML = `<div style="padding:2rem;color:red;">Error loading feedback section.</div>`;
+    }
+}
+
+async function renderTouristDiscoverView(sidebar, content) {
+    content.innerHTML = `<div style="padding:2rem;text-align:center;">Loading Explore Page...</div>`;
+
+    try {
+        const discoverHTML = `
+            <!-- Our Fleet Section -->
+            <div class="page-header" style="margin-bottom: 2rem;">
+                <h2>Explore Kenya with RideHub</h2>
+                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">Discover amazing destinations and travel in style with our premium fleet</p>
+            </div>
+
+            <!-- Fleet Showcase -->
+            <div style="margin-bottom: 3rem;">
+                <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; color: var(--text-primary);">Our Premium Fleet</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 2rem;">
+                    <!-- Sedan -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease, box-shadow 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'; this.style.boxShadow='0 20px 25px -5px rgb(0 0 0 / 0.2)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 10px 15px -3px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1552820728-8ac41f1ce891?w=500&h=300&fit=crop" alt="Sedan" style="width: 100%; height: 200px; object-fit: cover;">
+                        <div style="padding: 1.5rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600;">Sedan - Toyota Camry</h4>
+                            <p style="margin: 0 0 1rem; color: var(--text-secondary); font-size: 0.875rem;">Perfect for comfort & style. Ideal for airport transfers and business meetings.</p>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="color: var(--primary-color); font-weight: 600; font-size: 1.1rem;">From KSH 1,200</span>
+                                <span style="background: var(--primary-light); color: var(--primary-color); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.75rem; font-weight: 500;">4 Passengers</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUV -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease, box-shadow 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'; this.style.boxShadow='0 20px 25px -5px rgb(0 0 0 / 0.2)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 10px 15px -3px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1519641471654-76ce0107ad1b?w=500&h=300&fit=crop" alt="SUV" style="width: 100%; height: 200px; object-fit: cover;">
+                        <div style="padding: 1.5rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600;">SUV - Toyota Noah</h4>
+                            <p style="margin: 0 0 1rem; color: var(--text-secondary); font-size: 0.875rem;">Spacious & rugged. Great for family trips and safari adventures.</p>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="color: var(--primary-color); font-weight: 600; font-size: 1.1rem;">From KSH 1,500</span>
+                                <span style="background: var(--primary-light); color: var(--primary-color); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.75rem; font-weight: 500;">6 Passengers</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Van -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease, box-shadow 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'; this.style.boxShadow='0 20px 25px -5px rgb(0 0 0 / 0.2)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 10px 15px -3px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1464207687429-7505649dae38?w=500&h=300&fit=crop" alt="Van" style="width: 100%; height: 200px; object-fit: cover;">
+                        <div style="padding: 1.5rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600;">Van - Nissan Caravan</h4>
+                            <p style="margin: 0 0 1rem; color: var(--text-secondary); font-size: 0.875rem;">Spacious & comfortable. Perfect for groups and tour operators.</p>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <span style="color: var(--primary-color); font-weight: 600; font-size: 1.1rem;">From KSH 2,000</span>
+                                <span style="background: var(--primary-light); color: var(--primary-color); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.75rem; font-weight: 500;">12 Passengers</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top Destinations -->
+            <div style="margin-bottom: 3rem;">
+                <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; color: var(--text-primary);">Popular Destinations</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 2rem;">
+                    <!-- Nairobi National Park -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'" onmouseout="this.style.transform='translateY(0)'">
+                        <img src="https://images.unsplash.com/photo-1516426122078-c23e76319801?w=500&h=250&fit=crop" alt="Nairobi National Park" style="width: 100%; height: 180px; object-fit: cover;">
+                        <div style="padding: 1rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600; font-size: 1rem;">Nairobi National Park</h4>
+                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.75rem;">See lions, giraffes & zebras with the skyline backdrop</p>
+                        </div>
+                    </div>
+
+                    <!-- Lake Naivasha -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'" onmouseout="this.style.transform='translateY(0)'">
+                        <img src="https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=500&h=250&fit=crop" alt="Lake Naivasha" style="width: 100%; height: 180px; object-fit: cover;">
+                        <div style="padding: 1rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600; font-size: 1rem;">Lake Naivasha</h4>
+                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.75rem;">Scenic lake ideal for water sports & relaxation</p>
+                        </div>
+                    </div>
+
+                    <!-- Masai Mara -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'" onmouseout="this.style.transform='translateY(0)'">
+                        <img src="https://images.unsplash.com/photo-1546182990-dffeafbe841d?w=500&h=250&fit=crop" alt="Masai Mara" style="width: 100%; height: 180px; object-fit: cover;">
+                        <div style="padding: 1rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600; font-size: 1rem;">Masai Mara</h4>
+                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.75rem;">World-renowned safari destination with Big Five</p>
+                        </div>
+                    </div>
+
+                    <!-- Mount Kenya -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'" onmouseout="this.style.transform='translateY(0)'">
+                        <img src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=500&h=250&fit=crop" alt="Mount Kenya" style="width: 100%; height: 180px; object-fit: cover;">
+                        <div style="padding: 1rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600; font-size: 1rem;">Mount Kenya</h4>
+                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.75rem;">Africa's second highest peak ideal for trekking</p>
+                        </div>
+                    </div>
+
+                    <!-- Mombasa Beach -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'" onmouseout="this.style.transform='translateY(0)'">
+                        <img src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500&h=250&fit=crop" alt="Mombasa Beach" style="width: 100%; height: 180px; object-fit: cover;">
+                        <div style="padding: 1rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600; font-size: 1rem;">Mombasa Beach</h4>
+                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.75rem;">Sun, sand & sea with historical Swahili culture</p>
+                        </div>
+                    </div>
+
+                    <!-- Hell's Gate National Park -->
+                    <div class="card-modern" style="overflow: hidden; transition: transform 0.3s ease; cursor: pointer;" onmouseover="this.style.transform='translateY(-8px)'" onmouseout="this.style.transform='translateY(0)'">
+                        <img src="https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=500&h=250&fit=crop" alt="Hell's Gate" style="width: 100%; height: 180px; object-fit: cover;">
+                        <div style="padding: 1rem;">
+                            <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600; font-size: 1rem;">Hell's Gate N.P.</h4>
+                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.75rem;">Dramatic gorge with geothermal springs & hiking</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Why Choose RideHub -->
+            <div style="background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; padding: 2.5rem; border-radius: var(--radius-lg); margin-top: 2rem;">
+                <h3 style="margin-top: 0; font-size: 1.5rem; font-weight: 600;">Why Choose RideHub?</h3>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 2rem; margin-top: 1.5rem;">
+                    <div>
+                        <h4 style="margin: 0 0 0.5rem; font-size: 1.1rem;">🛡️ Safe & Reliable</h4>
+                        <p style="margin: 0; opacity: 0.9; font-size: 0.875rem;">Professional drivers, verified vehicles, and 24/7 support</p>
+                    </div>
+                    <div>
+                        <h4 style="margin: 0 0 0.5rem; font-size: 1.1rem;">💰 Transparent Pricing</h4>
+                        <p style="margin: 0; opacity: 0.9; font-size: 0.875rem;">No hidden charges. What you see is what you pay</p>
+                    </div>
+                    <div>
+                        <h4 style="margin: 0 0 0.5rem; font-size: 1.1rem;">📱 Easy Booking</h4>
+                        <p style="margin: 0; opacity: 0.9; font-size: 0.875rem;">Book in seconds and track your ride in real-time</p>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        content.innerHTML = discoverHTML;
+    } catch (e) {
+        console.error(e);
+        content.innerHTML = `<div style="padding:2rem;color:red;">Error loading discover section.</div>`;
     }
 }

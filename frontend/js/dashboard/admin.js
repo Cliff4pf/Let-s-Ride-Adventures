@@ -1,12 +1,15 @@
 // admin.js
 import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
+import { attachLogoutListener } from "./logout-helper.js";
+import { initializeProfileModal } from "./profile-modal.js";
 
 let adminState = {
     bookings: [],
     users: [],
     vehicles: [],
     feedback: [],
+    auditLogs: [],
     activeTab: 'overview', // 'overview', 'users', 'fleet', 'analytics', 'feedback'
     filters: { status: 'ALL', search: '' }
 };
@@ -29,10 +32,20 @@ export async function renderAdminUI(sidebar, content) {
         });
     });
 
+    // Attach logout listener
+    const logoutBtn = sidebar.querySelector('#logoutBtn');
+    attachLogoutListener(logoutBtn);
+
+    // Initialize profile modal
+    initializeProfileModal();
+
     if (adminState.bookings.length === 0) {
         content.innerHTML = `<div style="padding:2rem;text-align:center;">Loading Admin Telemetry...</div>`;
         await loadAdminData(content);
     }
+
+    // Initialize notification system
+    setTimeout(() => initializeAdminNotifications(), 100);
 
     renderAdminView(content);
 }
@@ -63,6 +76,175 @@ export async function loadAdminData(content) {
     } catch (e) {
         console.error(e);
         if (content) content.innerHTML = `<div style="padding:2rem;color:red;">Error loading admin data.</div>`;
+    }
+}
+
+// Generate audit logs from data
+function generateAuditLogs() {
+    const logs = [];
+
+    // Log recent bookings
+    adminState.bookings.slice(0, 20).forEach(b => {
+        logs.push({
+            id: b.id,
+            type: 'booking',
+            icon: '🚗',
+            title: 'New Booking Created',
+            description: `${b.vehicleType} booked to ${b.destination || 'Unknown'}`,
+            timestamp: new Date(b.createdAt),
+            severity: 'info'
+        });
+    });
+
+    // Log booking status changes
+    adminState.bookings.slice(0, 10).forEach(b => {
+        if (b.status === 'COMPLETED') {
+            logs.push({
+                id: `${b.id}-complete`,
+                type: 'completion',
+                icon: '✅',
+                title: 'Trip Completed',
+                description: `${b.vehicleType} trip to ${b.destination || 'Unknown'} completed`,
+                timestamp: new Date(b.completedAt || b.createdAt),
+                severity: 'success'
+            });
+        } else if (b.status === 'CANCELLED') {
+            logs.push({
+                id: `${b.id}-cancel`,
+                type: 'cancellation',
+                icon: '❌',
+                title: 'Booking Cancelled',
+                description: `${b.vehicleType} booking cancelled`,
+                timestamp: new Date(b.createdAt),
+                severity: 'warning'
+            });
+        }
+    });
+
+    // Log recent user registrations
+    adminState.users
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .slice(0, 15)
+        .forEach(u => {
+            logs.push({
+                id: `user-${u.uid}`,
+                type: 'registration',
+                icon: '👤',
+                title: 'New User Registered',
+                description: `${u.firstName} ${u.lastName} registered as ${u.role}`,
+                timestamp: new Date(u.createdAt),
+                severity: 'info'
+            });
+        });
+
+    // Log high-priority events
+    adminState.users
+        .filter(u => u.status === 'Suspended')
+        .forEach(u => {
+            logs.push({
+                id: `suspend-${u.uid}`,
+                type: 'suspension',
+                icon: '⛔',
+                title: 'User Suspended',
+                description: `${u.firstName} ${u.lastName} (${u.role}) has been suspended`,
+                timestamp: new Date(u.updatedAt || u.createdAt),
+                severity: 'critical'
+            });
+        });
+
+    // Log feedback received
+    adminState.feedback.slice(0, 10).forEach(f => {
+        const ratingEmoji = f.rating >= 4 ? '⭐' : f.rating >= 3 ? '⚠️' : '❌';
+        logs.push({
+            id: `feedback-${f.id}`,
+            type: 'feedback',
+            icon: ratingEmoji,
+            title: `Customer Review (${f.rating}⭐)`,
+            description: f.comment || 'Review submitted',
+            timestamp: new Date(f.createdAt),
+            severity: f.rating >= 4 ? 'success' : f.rating >= 3 ? 'warning' : 'critical'
+        });
+    });
+
+    // Sort by timestamp (newest first)
+    logs.sort((a, b) => b.timestamp - a.timestamp);
+    adminState.auditLogs = logs;
+    return logs;
+}
+
+// Show audit logs modal
+function showAuditLogs() {
+    const logs = generateAuditLogs();
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'auditLogsModal';
+    modal.style.display = 'flex';
+    modal.style.zIndex = '3000';
+    modal.style.opacity = '0';
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            modal.style.opacity = '0';
+            setTimeout(() => modal.remove(), 300);
+        }
+    });
+
+    const logItems = logs.slice(0, 50).map(log => `
+        <div style="display: flex; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--border-color); hover:background: var(--surface-color); transition: background 0.2s;">
+            <div style="font-size: 1.5rem; min-width: 2rem; text-align: center;">${log.icon}</div>
+            <div style="flex: 1;">
+                <div style="display: flex; justify-content: space-between; align-items: start; gap: 1rem;">
+                    <div>
+                        <h4 style="margin: 0 0 0.25rem; color: var(--text-primary); font-weight: 600;">${log.title}</h4>
+                        <p style="margin: 0; color: var(--text-secondary); font-size: 0.875rem;">${log.description}</p>
+                    </div>
+                    <span style="color: var(--text-secondary); font-size: 0.75rem; white-space: nowrap;">${log.timestamp.toLocaleTimeString()}</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 600px; max-height: 80vh; display: flex; flex-direction: column;">
+            <div class="modal-header" style="border-bottom: 2px solid var(--border-color);">
+                <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                    📋 Audit Log Monitor
+                </h3>
+                <button id="closeAuditModal" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">×</button>
+            </div>
+            <div style="flex: 1; overflow-y: auto; background: white;">
+                ${logs.length > 0 ? logItems : '<div style="padding: 2rem; text-align: center; color: var(--text-secondary);">No audit logs yet</div>'}
+            </div>
+            <div style="border-top: 1px solid var(--border-color); padding: 1rem; background: var(--surface-color); text-align: right;">
+                <small style="color: var(--text-secondary);">Showing ${Math.min(logs.length, 50)} of ${logs.length} events</small>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+    setTimeout(() => modal.style.opacity = '1', 10);
+
+    document.getElementById('closeAuditModal').addEventListener('click', () => {
+        modal.style.opacity = '0';
+        setTimeout(() => modal.remove(), 300);
+    });
+
+    // Update notification badge
+    const badge = document.querySelector('.notification-badge');
+    if (badge) {
+        const unreadCount = Math.min(logs.length, 99);
+        badge.textContent = unreadCount;
+    }
+}
+
+// Hook into bell button
+export function initializeAdminNotifications() {
+    const bellBtn = document.querySelector('.topbar-actions .action-btn');
+    if (bellBtn) {
+        bellBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            showAuditLogs();
+        });
     }
 }
 
@@ -326,20 +508,40 @@ function renderUsersTab(content) {
 async function promoteUser(uid, role, content) {
     try {
         const response = await api.promoteUser(uid, role);
-        const result = await response.json();
-
+        
+        // Handle response - API might return empty 204 or JSON response
+        let result = {};
+        const contentType = response.headers.get('content-type');
+        
         if (response.ok) {
-            showToast(result.message);
+            // Only try to parse JSON if response has content
+            if (contentType && contentType.includes('application/json')) {
+                try {
+                    result = await response.json();
+                } catch (e) {
+                    // Empty body or invalid JSON - that's okay for 204/200 success
+                    result = { message: `User promoted to ${role}` };
+                }
+            } else {
+                result = { message: `User promoted to ${role}` };
+            }
+            
+            showToast(result.message || `User promoted to ${role}`, '#10b981');
             await loadAdminData(content);
         } else {
+            // Error response
+            try {
+                result = await response.json();
+            } catch (e) {
+                result = { message: 'Promotion failed' };
+            }
+            
             console.error("Promotion failed:", result);
             showToast(result.message || "Promotion failed", "#ef4444");
-            alert("Error: " + (result.message || "Promotion failed"));
         }
     } catch (e) {
         console.error("Network error during promotion:", e);
-        showToast("Network error during promotion", "#ef4444");
-        alert("Network error: " + e.message);
+        showToast("Network error: " + e.message, "#ef4444");
     }
 }
 
@@ -348,20 +550,40 @@ async function suspendUser(uid, content) {
 
     try {
         const response = await api.suspendUser(uid);
-        const result = await response.json();
-
+        
+        // Handle response - API might return empty 204 or JSON response
+        let result = {};
+        const contentType = response.headers.get('content-type');
+        
         if (response.ok) {
-            showToast(result.message);
+            // Only try to parse JSON if response has content
+            if (contentType && contentType.includes('application/json')) {
+                try {
+                    result = await response.json();
+                } catch (e) {
+                    // Empty body or invalid JSON - that's okay for 204/200 success
+                    result = { message: 'User suspended successfully' };
+                }
+            } else {
+                result = { message: 'User suspended successfully' };
+            }
+            
+            showToast(result.message || 'User suspended successfully', '#10b981');
             await loadAdminData(content);
         } else {
+            // Error response
+            try {
+                result = await response.json();
+            } catch (e) {
+                result = { message: 'Suspension failed' };
+            }
+            
             console.error("Suspension failed", result);
             showToast(result.message || "Suspension failed", "#ef4444");
-            alert("Error: " + (result.message || "Suspension failed"));
         }
     } catch (e) {
         console.error("Network error during suspension", e);
-        showToast("Network error during suspension", "#ef4444");
-        alert("Network error: " + e.message);
+        showToast("Network error: " + e.message, "#ef4444");
     }
 }
 
@@ -527,79 +749,209 @@ async function renderAnalyticsTab(content) {
         const totalBookings = summaryData.totalBookings ?? summaryData.TotalBookings ?? 0;
         const completedTrips = summaryData.completedTrips ?? summaryData.CompletedTrips ?? 0;
 
+        // Calculate analytics metrics
+        const cancelledBookings = adminState.bookings.filter(b => b.status === "CANCELLED").length;
+        const cancellationRate = totalBookings > 0 ? ((cancelledBookings / totalBookings) * 100).toFixed(1) : 0;
+        
+        // Revenue by vehicle type
+        const vehicleRevenue = {};
+        adminState.bookings
+            .filter(b => b.status === "COMPLETED" && b.paymentStatus === "PAID")
+            .forEach(b => {
+                const type = b.vehicleType || 'Unknown';
+                vehicleRevenue[type] = (vehicleRevenue[type] || 0) + (b.price || 0);
+            });
+
+        // Employee performance metrics
+        const driverPerformance = {};
+        adminState.users.filter(u => u.role === 'Driver').forEach(driver => {
+            const driverBookings = adminState.bookings.filter(b => b.driverId === driver.uid);
+            const driverFeedback = adminState.feedback.filter(f => f.driverId === driver.uid);
+            const avgRating = driverFeedback.length > 0 
+                ? (driverFeedback.reduce((sum, f) => sum + (f.rating || 0), 0) / driverFeedback.length).toFixed(1)
+                : 'N/A';
+            const completedTrips = driverBookings.filter(b => b.status === 'COMPLETED').length;
+            
+            driverPerformance[driver.uid] = {
+                name: driver.firstName + ' ' + driver.lastName,
+                bookings: driverBookings.length,
+                completed: completedTrips,
+                avgRating: avgRating,
+                revenue: driverBookings.filter(b => b.paymentStatus === 'PAID').reduce((sum, b) => sum + (b.price || 0), 0),
+                feedbackCount: driverFeedback.length
+            };
+        });
+
+        // Sort drivers by rating
+        const sortedDrivers = Object.entries(driverPerformance)
+            .map(([id, perf]) => ({ id, ...perf }))
+            .sort((a, b) => {
+                const ratingA = typeof a.avgRating === 'number' ? a.avgRating : 0;
+                const ratingB = typeof b.avgRating === 'number' ? b.avgRating : 0;
+                return ratingB - ratingA;
+            });
+
+        // Workload analysis - bookings per employee
+        const employeeWorkload = {};
+        adminState.bookings.forEach(b => {
+            if (b.driverId) {
+                employeeWorkload[b.driverId] = (employeeWorkload[b.driverId] || 0) + 1;
+            }
+        });
+
+        // Peak hours analysis
+        const hoursData = {};
+        adminState.bookings.forEach(b => {
+            if (b.scheduledDate) {
+                const hour = new Date(b.scheduledDate).getHours();
+                hoursData[hour] = (hoursData[hour] || 0) + 1;
+            }
+        });
+
+        // Average order value
+        const completedRevenue = adminState.bookings
+            .filter(b => b.status === "COMPLETED" && b.paymentStatus === "PAID")
+            .map(b => b.price || 0);
+        const avgOrderValue = completedRevenue.length > 0 
+            ? (completedRevenue.reduce((a, b) => a + b, 0) / completedRevenue.length).toFixed(0)
+            : 0;
+
         const tData = Array.isArray(trendsData) ? trendsData : [];
         const tLabels = tData.map(d => d.destination || d.Destination || 'Unknown');
         const tCounts = tData.map(d => d.count || d.Count || 0);
 
         content.innerHTML = `
             <div class="page-header">
-                <h2>Data-Driven Intelligence Dashboard</h2>
+                <h2>📊 Data-Driven Intelligence Dashboard</h2>
             </div>
             
-            <div style="background: linear-gradient(135deg, var(--primary-color), #4338ca); color: white; padding: 2rem; border-radius: 12px; margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center;">
+            <!-- Key Metrics Banner -->
+            <div style="background: linear-gradient(135deg, var(--primary-color), #4338ca); color: white; padding: 2rem; border-radius: 12px; margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 2rem;">
                 <div>
                     <h3 style="margin-bottom: 0.5rem; font-size: 1.2rem;">Platform Summary</h3>
                     <p style="opacity: 0.9;">Real-time Business Metrics</p>
                 </div>
-                <div style="text-align: right; display: flex; gap: 2rem;">
+                <div style="text-align: right; display: flex; gap: 2rem; flex-wrap: wrap;">
                     <div>
                         <div style="font-size: 0.8rem; text-transform: uppercase;">Total Revenue</div>
                         <div style="font-size: 1.5rem; font-weight: bold;">KSH ${totalRevenue.toLocaleString()}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.8rem; text-transform: uppercase;">Avg Order Value</div>
+                        <div style="font-size: 1.5rem; font-weight: bold;">KSH ${avgOrderValue}</div>
                     </div>
                     <div>
                         <div style="font-size: 0.8rem; text-transform: uppercase;">Total Bookings</div>
                         <div style="font-size: 1.5rem; font-weight: bold;">${totalBookings}</div>
                     </div>
                     <div>
-                        <div style="font-size: 0.8rem; text-transform: uppercase;">Completed Trips</div>
-                        <div style="font-size: 1.5rem; font-weight: bold;">${completedTrips}</div>
+                        <div style="font-size: 0.8rem; text-transform: uppercase;">Cancellation Rate</div>
+                        <div style="font-size: 1.5rem; font-weight: bold; color: ${cancellationRate > 10 ? '#ff6b6b' : '#51cf66'};">${cancellationRate}%</div>
                     </div>
                 </div>
             </div>
 
+            <!-- Revenue & Booking Charts -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
                 <div class="metric-card" style="display: block;">
-                    <h3 style="margin-bottom: 1rem;">Platform Metrics Overview</h3>
-                    <canvas id="revenueChart"></canvas>
+                    <h3 style="margin-bottom: 1rem;">💰 Revenue by Vehicle Type</h3>
+                    <canvas id="vehicleRevenueChart"></canvas>
                 </div>
                 <div class="metric-card" style="display: block;">
-                    <h3 style="margin-bottom: 1rem;">Predictive Demand by Destination</h3>
+                    <h3 style="margin-bottom: 1rem;">🎯 Demand by Destination</h3>
                     <div style="max-height: 300px; display: flex; justify-content: center;">
                         <canvas id="trendChart"></canvas>
                     </div>
                 </div>
             </div>
+
+            <!-- Peak Hours & Workload -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+                <div class="metric-card" style="display: block;">
+                    <h3 style="margin-bottom: 1rem;">⏰ Peak Hours Analysis</h3>
+                    <canvas id="peakHoursChart"></canvas>
+                </div>
+                <div class="metric-card" style="display: block;">
+                    <h3 style="margin-bottom: 1rem;">👥 Workload Distribution</h3>
+                    <canvas id="workloadChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Employee Performance Section -->
+            <div class="metric-card" style="display: block; margin-bottom: 1.5rem;">
+                <h3 style="margin-bottom: 1.5rem;">⭐ Driver Performance Rankings</h3>
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse;">
+                        <thead>
+                            <tr style="background: var(--primary-light);">
+                                <th style="padding: 0.75rem; text-align: left; border-bottom: 2px solid var(--border-color);">Driver Name</th>
+                                <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid var(--border-color);">Rating ⭐</th>
+                                <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid var(--border-color);">Completed Trips</th>
+                                <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid var(--border-color);">Reviews</th>
+                                <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid var(--border-color);">Revenue Generated</th>
+                                <th style="padding: 0.75rem; text-align: center; border-bottom: 2px solid var(--border-color);">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${sortedDrivers.map((driver, idx) => {
+                                const ratingNum = typeof driver.avgRating === 'number' ? driver.avgRating : parseFloat(driver.avgRating) || 0;
+                                const isTopPerformer = idx < 3 && ratingNum >= 4;
+                                const isPoorPerformer = ratingNum < 3 && driver.feedbackCount >= 3;
+                                const statusColor = isTopPerformer ? '#10b981' : isPoorPerformer ? '#ef4444' : '#f59e0b';
+                                const statusLabel = isTopPerformer ? '🏆 Top Performer' : isPoorPerformer ? '⚠️ Needs Review' : '✓ Active';
+                                
+                                return `
+                                    <tr style="border-bottom: 1px solid var(--border-color);">
+                                        <td style="padding: 0.75rem; font-weight: 500;">${driver.name}</td>
+                                        <td style="padding: 0.75rem; text-align: center; font-weight: bold; color: ${ratingNum >= 4 ? '#10b981' : ratingNum >= 3 ? '#f59e0b' : '#ef4444'};">
+                                            ${driver.avgRating !== 'N/A' ? driver.avgRating : 'No ratings'}
+                                        </td>
+                                        <td style="padding: 0.75rem; text-align: center;">${driver.completed}/${driver.bookings}</td>
+                                        <td style="padding: 0.75rem; text-align: center;">${driver.feedbackCount}</td>
+                                        <td style="padding: 0.75rem; text-align: center;">KSH ${driver.revenue.toLocaleString()}</td>
+                                        <td style="padding: 0.75rem; text-align: center; font-weight: 600; color: ${statusColor};">${statusLabel}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </tbody>
+                    </table>
+                </div>
+                <p style="margin-top: 1rem; color: var(--text-secondary); font-size: 0.875rem;">
+                    💡 <strong>Insights:</strong> Top performers have 4+ rating | Poor performers (below 3⭐) with 3+ reviews need follow-up
+                </p>
+            </div>
+
+            <!-- Monthly Booking Chart -->
             <div class="metric-card" style="display:block;">
-                <h3 style="margin-bottom:1rem;">Monthly Bookings & Forecast</h3>
+                <h3 style="margin-bottom:1rem;">📈 Monthly Bookings & Revenue Forecast</h3>
                 <canvas id="bookingTimeChart"></canvas>
             </div>
         `;
 
         setTimeout(() => {
-            new Chart(document.getElementById("revenueChart"), {
-                type: "bar",
+            // Revenue by Vehicle Type
+            const vehicleLabels = Object.keys(vehicleRevenue);
+            const vehicleValues = Object.values(vehicleRevenue);
+            new Chart(document.getElementById("vehicleRevenueChart"), {
+                type: "doughnut",
                 data: {
-                    labels: ["Revenue", "Bookings", "Completed"],
+                    labels: vehicleLabels.length > 0 ? vehicleLabels : ['No Data'],
                     datasets: [{
-                        label: "Platform Metrics",
-                        data: [
-                            totalRevenue,
-                            totalBookings,
-                            completedTrips
-                        ],
-                        backgroundColor: ["#10b981", "#3b82f6", "#f59e0b"],
+                        data: vehicleValues.length > 0 ? vehicleValues : [0],
+                        backgroundColor: ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'],
                         borderRadius: 4
                     }]
                 },
-                options: { responsive: true, plugins: { legend: { display: false } } }
+                options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
             });
 
+            // Demand by Destination
             new Chart(document.getElementById("trendChart"), {
                 type: "pie",
                 data: {
-                    labels: tLabels,
+                    labels: tLabels.length > 0 ? tLabels : ['No Data'],
                     datasets: [{
-                        data: tCounts,
+                        data: tCounts.length > 0 ? tCounts : [0],
                         backgroundColor: [
                             '#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'
                         ]
@@ -608,47 +960,67 @@ async function renderAnalyticsTab(content) {
                 options: { responsive: true, maintainAspectRatio: false }
             });
 
-            // prepare monthly booking counts for descriptive+predictive
-            const monthMap = {};
-            adminState.bookings.forEach(b => {
-                const d = new Date(b.createdAt);
-                const key = d.toLocaleString('default', { month: 'short', year: 'numeric' });
-                monthMap[key] = (monthMap[key] || 0) + 1;
-            });
-            const months = Object.keys(monthMap).sort((a,b) => new Date(a) - new Date(b));
-            const counts = months.map(m => monthMap[m]);
-            // linear regression forecast next month
-            const x = months.map((_,i) => i+1);
-            const y = counts;
-            const xMean = x.reduce((a,c)=>a+c,0)/x.length;
-            const yMean = y.reduce((a,c)=>a+c,0)/y.length;
-            let num=0, den=0;
-            for(let i=0;i<x.length;i++){ num += (x[i]-xMean)*(y[i]-yMean); den += (x[i]-xMean)**2; }
-            const slope = den===0?0:num/den;
-            const intercept = yMean - slope*xMean;
-            const nextVal = Math.max(0, Math.round(intercept + slope*(x.length+1)));
-            const forecastLabels = months.concat(['Next']);
-            const forecastData = counts.concat([nextVal]);
-
-            new Chart(document.getElementById("bookingTimeChart"), {
+            // Peak Hours
+            const hoursLabels = Array.from({length: 24}, (_, i) => i + ':00');
+            const hoursValues = hoursLabels.map((_, i) => hoursData[i] || 0);
+            new Chart(document.getElementById("peakHoursChart"), {
                 type: "line",
                 data: {
-                    labels: forecastLabels,
-                    datasets:[{
-                        label:'Bookings',
-                        data: forecastData,
-                        fill:false,
-                        borderColor:'#3b82f6',
-                        tension:0.2
+                    labels: hoursLabels,
+                    datasets: [{
+                        label: 'Bookings per Hour',
+                        data: hoursValues,
+                        borderColor: '#4f46e5',
+                        backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                        tension: 0.4,
+                        fill: true
                     }]
                 },
-                options:{responsive:true, plugins:{legend:{display:false}}}
+                options: { responsive: true, plugins: { legend: { display: false } } }
             });
-        }, 50);
 
+            // Workload Distribution (Top 10 drivers)
+            const topDrivers = sortedDrivers.slice(0, 10);
+            new Chart(document.getElementById("workloadChart"), {
+                type: "bar",
+                data: {
+                    labels: topDrivers.map(d => d.name.split(' ')[0]),
+                    datasets: [{
+                        label: 'Total Bookings',
+                        data: topDrivers.map(d => d.bookings),
+                        backgroundColor: '#3b82f6'
+                    }]
+                },
+                options: { 
+                    responsive: true, 
+                    indexAxis: 'x',
+                    plugins: { legend: { display: false } }
+                }
+            });
+
+            // Monthly Bookings
+            new Chart(document.getElementById("bookingTimeChart"), {
+                type: "bar",
+                data: {
+                    labels: ["Revenue", "Bookings", "Completed", "Cancelled"],
+                    datasets: [{
+                        label: "Platform Metrics",
+                        data: [
+                            totalRevenue,
+                            totalBookings,
+                            completedTrips,
+                            cancelledBookings
+                        ],
+                        backgroundColor: ["#10b981", "#3b82f6", "#f59e0b", "#ef4444"],
+                        borderRadius: 4
+                    }]
+                },
+                options: { responsive: true, plugins: { legend: { display: false } } }
+            });
+        }, 100);
     } catch (e) {
-        console.error("Analytics Error: ", e);
-        content.innerHTML = `<div style="padding:2rem;color:red;">Failed to process predictive analytics model. See console.</div>`;
+        console.error('Analytics error:', e);
+        content.innerHTML = `<div style="padding:2rem;color:red;">Error loading analytics: ${e.message}</div>`;
     }
 }
 

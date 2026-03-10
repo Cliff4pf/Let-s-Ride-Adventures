@@ -183,6 +183,95 @@ const api = {
 
     getFeedbackByBooking: async function (bookingId) {
         return this.fetchWithAuth(`/Feedback/booking/${bookingId}`);
+    },
+
+    getMyFeedback: async function () {
+        return this.fetchWithAuth('/Feedback/my');
+    },
+
+    getFeedbackForUser: async function (userId) {
+        return this.fetchWithAuth(`/Feedback/for/${userId}`);
+    },
+
+    getFeedbackStats: async function (userId) {
+        return this.fetchWithAuth(`/Feedback/stats/${userId}`);
+    },
+
+    updateFeedback: async function (feedbackId, feedbackData) {
+        return this.fetchWithAuth(`/Feedback/${feedbackId}`, {
+            method: 'PUT',
+            body: JSON.stringify(feedbackData)
+        });
+    },
+
+    deleteFeedback: async function (feedbackId) {
+        return this.fetchWithAuth(`/Feedback/${feedbackId}`, {
+            method: 'DELETE'
+        });
+    },
+
+    // --- Messaging API ---
+    sendMessage: async function (messageData) {
+        return this.fetchWithAuth('/Message/send', {
+            method: 'POST',
+            body: JSON.stringify(messageData)
+        });
+    },
+
+    getInbox: async function () {
+        return this.fetchWithAuth('/Message/inbox');
+    },
+
+    getConversation: async function (userId) {
+        return this.fetchWithAuth(`/Message/conversation/${userId}`);
+    },
+
+    getUnreadMessages: async function () {
+        return this.fetchWithAuth('/Message/unread');
+    },
+
+    markMessageAsRead: async function (messageId) {
+        return this.fetchWithAuth(`/Message/${messageId}/read`, {
+            method: 'PUT'
+        });
+    },
+
+    deleteMessage: async function (messageId) {
+        return this.fetchWithAuth(`/Message/${messageId}`, {
+            method: 'DELETE'
+        });
+    },
+
+    getMessage: async function (messageId) {
+        return this.fetchWithAuth(`/Message/${messageId}`);
+    },
+
+    // --- Profile API ---
+    updateProfile: async function (profileData) {
+        return this.fetchWithAuth('/User/profile', {
+            method: 'PUT',
+            body: JSON.stringify(profileData)
+        });
+    },
+
+    changePassword: async function (currentPassword, newPassword) {
+        return this.fetchWithAuth('/User/change-password', {
+            method: 'POST',
+            body: JSON.stringify({ currentPassword, newPassword })
+        });
+    },
+
+    // --- Audit Logs API ---
+    getAuditLogs: async function (limit = 100) {
+        return this.fetchWithAuth(`/AuditLog?limit=${limit}`);
+    },
+
+    getAuditLogsByUser: async function (userId) {
+        return this.fetchWithAuth(`/AuditLog/user/${userId}`);
+    },
+
+    getAuditLogsByAction: async function (actionType) {
+        return this.fetchWithAuth(`/AuditLog/action/${actionType}`);
     }
 };
 
