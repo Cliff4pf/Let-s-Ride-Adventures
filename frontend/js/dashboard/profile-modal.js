@@ -156,8 +156,8 @@ function createProfileModalHtml(profile) {
 function attachProfileModalEvents(modal, originalProfile) {
     // Close button
     const closeBtn = modal.querySelector('.modal-close-btn');
-    const cancelBtn = modal.getElementById('profileCancelBtn');
-    const saveBtn = modal.getElementById('profileSaveBtn');
+    const cancelBtn = modal.querySelector('#profileCancelBtn');
+    const saveBtn = modal.querySelector('#profileSaveBtn');
 
     const closeModal = () => {
         modal.style.display = 'none';
@@ -166,11 +166,11 @@ function attachProfileModalEvents(modal, originalProfile) {
 
     // Helper function to check if any changes were made
     const checkForChanges = () => {
-        const fullName = modal.getElementById('profileFullName').value;
-        const email = modal.getElementById('profileEmail').value;
-        const phoneNumber = modal.getElementById('profilePhone').value;
-        const currentPassword = modal.getElementById('profileCurrentPassword').value;
-        const newPassword = modal.getElementById('profileNewPassword').value;
+        const fullName = modal.querySelector('#profileFullName').value;
+        const email = modal.querySelector('#profileEmail').value;
+        const phoneNumber = modal.querySelector('#profilePhone').value;
+        const currentPassword = modal.querySelector('#profileCurrentPassword').value;
+        const newPassword = modal.querySelector('#profileNewPassword').value;
 
         // Check text field changes
         const hasTextChanges = 
@@ -180,8 +180,8 @@ function attachProfileModalEvents(modal, originalProfile) {
 
         // Check driver license if applicable
         const hasLicenseChanges = originalProfile.role === 'Driver' && 
-            modal.getElementById('profileLicense') && 
-            modal.getElementById('profileLicense').value !== (originalProfile.licenseNumber || '');
+            modal.querySelector('#profileLicense') && 
+            modal.querySelector('#profileLicense').value !== (originalProfile.licenseNumber || '');
 
         // Check password change request
         const hasPasswordChanges = currentPassword && newPassword;
@@ -267,8 +267,8 @@ function attachProfileModalEvents(modal, originalProfile) {
     });
 
     // Password validation
-    const newPassInput = modal.getElementById('profileNewPassword');
-    const confirmPassInput = modal.getElementById('profileConfirmPassword');
+    const newPassInput = modal.querySelector('#profileNewPassword');
+    const confirmPassInput = modal.querySelector('#profileConfirmPassword');
 
     confirmPassInput.addEventListener('change', () => {
         if (newPassInput.value && newPassInput.value !== confirmPassInput.value) {
@@ -284,17 +284,17 @@ function attachProfileModalEvents(modal, originalProfile) {
 }
 
 async function saveProfileChanges(modal, originalProfile) {
-    const saveBtn = modal.getElementById('profileSaveBtn');
+    const saveBtn = modal.querySelector('#profileSaveBtn');
     saveBtn.disabled = true;
     saveBtn.innerHTML = '⏳ Saving...';
 
     try {
-        const fullName = modal.getElementById('profileFullName').value;
-        const email = modal.getElementById('profileEmail').value;
-        const phoneNumber = modal.getElementById('profilePhone').value;
-        const currentPassword = modal.getElementById('profileCurrentPassword').value;
-        const newPassword = modal.getElementById('profileNewPassword').value;
-        const confirmPassword = modal.getElementById('profileConfirmPassword').value;
+        const fullName = modal.querySelector('#profileFullName').value;
+        const email = modal.querySelector('#profileEmail').value;
+        const phoneNumber = modal.querySelector('#profilePhone').value;
+        const currentPassword = modal.querySelector('#profileCurrentPassword').value;
+        const newPassword = modal.querySelector('#profileNewPassword').value;
+        const confirmPassword = modal.querySelector('#profileConfirmPassword').value;
 
         // Validation
         if (!fullName.trim()) {
@@ -327,7 +327,7 @@ async function saveProfileChanges(modal, originalProfile) {
 
         // Add driver-specific fields if applicable
         if (originalProfile.role === 'Driver') {
-            const license = modal.getElementById('profileLicense')?.value;
+            const license = modal.querySelector('#profileLicense')?.value;
             if (license) updateData.licenseNumber = license;
         }
 

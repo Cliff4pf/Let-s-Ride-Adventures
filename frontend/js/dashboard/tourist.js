@@ -40,6 +40,107 @@ function calculateUserRating(bookings) {
     return Math.round(rating * 10) / 10; // Round to 1 decimal place
 }
 
+// Show feedback prompt modal for completed trips
+async function showFeedbackPrompt(booking) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+    modal.style.zIndex = '3000';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3 style="margin: 0; display: flex; align-items: center; gap: 0.75rem;">
+                    Rating Your Experience
+                </h3>
+                <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">x</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <p style="margin-top: 0; color: var(--text-secondary);">How was your trip to <strong>${booking.destination}</strong>?</p>
+                
+                <div style="margin: 1.5rem 0;">
+                    <label style="display: block; margin-bottom: 0.75rem; font-weight: 500;">Trip Rating</label>
+                    <div style="display: flex; gap: 0.5rem; font-size: 2rem;" id="ratingStars">
+                        <button type="button" data-rating="1" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
+                        <button type="button" data-rating="2" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
+                        <button type="button" data-rating="3" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
+                        <button type="button" data-rating="4" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
+                        <button type="button" data-rating="5" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
+                    </div>
+                </div>
+                
+                <div style="margin: 1.5rem 0;">
+                    <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Comments (Optional)</label>
+                    <textarea id="feedbackComment" placeholder="Share your feedback..." class="form-control" 
+                              style="width: 100%; height: 100px; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 6px; font-family: inherit;"></textarea>
+                </div>
+                
+                <div style="display: flex; gap: 0.75rem; margin-top: 2rem;">
+                    <button type="button" id="submitFeedbackBtn" class="btn btn-primary" style="flex: 1;">Submit Feedback</button>
+                    <button type="button" id="skipFeedbackBtn" class="btn btn-secondary" style="flex: 1;">Skip for Now</button>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
+    
+    let selectedRating = 0;
+    const starsContainer = modal.querySelector('#ratingStars');
+    const stars = starsContainer.querySelectorAll('[data-rating]');
+    
+    stars.forEach(star => {
+        star.addEventListener('click', (e) => {
+            selectedRating = parseInt(e.target.dataset.rating);
+            stars.forEach((s, idx) => {
+                s.style.opacity = (idx + 1) <= selectedRating ? '1' : '0.4';
+            });
+        });
+    });
+    
+    const closeBtn = modal.querySelector('.modal-close-btn');
+    const submitBtn = modal.querySelector('#submitFeedbackBtn');
+    const skipBtn = modal.querySelector('#skipFeedbackBtn');
+    const commentInput = modal.querySelector('#feedbackComment');
+    
+    const closeModal = () => {
+        modal.style.opacity = '0';
+        setTimeout(() => modal.remove(), 300);
+    };
+    
+    closeBtn.addEventListener('click', closeModal);
+    skipBtn.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+    
+    submitBtn.addEventListener('click', async (e) => {
+        if (selectedRating === 0) {
+            showToast('Please select a rating', '#ef4444');
+            return;
+        }
+        
+        try {
+            const feedback = {
+                bookingId: booking.id,
+                rating: selectedRating,
+                comment: commentInput.value || '',
+                driverId: booking.assignedDriverId || ''
+            };
+            
+            const res = await api.createFeedback(feedback);
+            if (res.ok) {
+                showToast('Thank you for your feedback!', '#10b981');
+                closeModal();
+            } else {
+                showToast('Failed to submit feedback', '#ef4444');
+            }
+        } catch (error) {
+            console.error('Error submitting feedback:', error);
+            showToast('Error submitting feedback', '#ef4444');
+        }
+    });
+}
+
 // Setup menu bar events (settings dropdown, notifications, messages)
 function setupMenuBarEvents() {
     const settingsBtn = document.getElementById('settingsBtnTopbar');
@@ -202,6 +303,21 @@ async function showNotificationsModal() {
                                             <p style="margin: 0.5rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">
                                                 ${new Date(notif.booking.startDate).toLocaleDateString()} at ${new Date(notif.booking.startDate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                             </p>
+                                            ${notif.booking.status === 'ASSIGNED' && notif.booking.driverId ? `
+                                                <div style="margin-top: 0.75rem; padding: 0.75rem; background: white; border-radius: 6px; border: 1px solid var(--border-color);">
+                                                    <p style="margin: 0 0 0.5rem; font-size: 0.875rem; color: var(--text-secondary); font-weight: 500;">Driver Contact Details</p>
+                                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.875rem;">
+                                                        <div>
+                                                            <span style="color: var(--text-secondary);">Name:</span>
+                                                            <span style="font-weight: 600; color: var(--text-primary);">${notif.booking.driverName || 'Loading...'}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span style="color: var(--text-secondary);">Phone:</span>
+                                                            <span style="font-weight: 600; color: var(--text-primary);">${notif.booking.driverPhone || 'Loading...'}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ` : ''}
                                         </div>
                                     </div>
                                 `).join('')}
@@ -1154,12 +1270,22 @@ async function renderTouristFeedbackView(sidebar, content) {
 
                         <div style="background: #f9fafb; border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
                             <div style="margin-bottom: 1rem;">
-                                <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">Rate Your Experience</label>
+                                <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">Rate Your Overall Experience</label>
                                 <div style="display: flex; gap: 0.5rem; font-size: 1.5rem;">
                                     ${[1, 2, 3, 4, 5].map(star => `
-                                        <button class="rating-star" data-booking="${booking.id}" data-rating="${star}" style="background: none; border: none; cursor: pointer; font-size: 2rem; color: #d1d5db; transition: color 0.2s;">★</button>
+                                        <button class="rating-star experience-rating" data-booking="${booking.id}" data-rating="${star}" style="background: none; border: none; cursor: pointer; font-size: 2rem; color: #d1d5db; transition: color 0.2s;">★</button>
                                     `).join('')}
                                 </div>
+                            </div>
+
+                            <div style="margin-bottom: 1rem;">
+                                <label style="display: block; font-weight: 600; margin-bottom: 0.5rem; color: var(--text-primary);">Rate Your Driver (Optional)</label>
+                                <div style="display: flex; gap: 0.5rem; font-size: 1.5rem;">
+                                    ${[1, 2, 3, 4, 5].map(star => `
+                                        <button class="rating-star driver-rating" data-booking="${booking.id}" data-rating="${star}" style="background: none; border: none; cursor: pointer; font-size: 2rem; color: #d1d5db; transition: color 0.2s;">★</button>
+                                    `).join('')}
+                                </div>
+                                <small style="color: var(--text-secondary); display: block; margin-top: 0.25rem;">Help us improve driver service quality</small>
                             </div>
 
                             <div style="margin-bottom: 1rem;">
@@ -1190,9 +1316,10 @@ async function renderTouristFeedbackView(sidebar, content) {
             star.addEventListener('click', (e) => {
                 const bookingId = e.target.getAttribute('data-booking');
                 const rating = parseInt(e.target.getAttribute('data-rating'));
+                const isDriverRating = e.target.classList.contains('driver-rating');
 
                 // Update UI
-                const starsForBooking = content.querySelectorAll(`[data-booking="${bookingId}"].rating-star`);
+                const starsForBooking = content.querySelectorAll(`[data-booking="${bookingId}"].rating-star${isDriverRating ? '.driver-rating' : '.experience-rating'}`);
                 starsForBooking.forEach((s, idx) => {
                     if (idx < rating) {
                         s.style.color = '#fbbf24';
@@ -1207,7 +1334,8 @@ async function renderTouristFeedbackView(sidebar, content) {
 
             star.addEventListener('mouseover', (e) => {
                 const rating = parseInt(e.target.getAttribute('data-rating'));
-                const starsForBooking = content.querySelectorAll(`[data-booking="${e.target.getAttribute('data-booking')}"].rating-star`);
+                const isDriverRating = e.target.classList.contains('driver-rating');
+                const starsForBooking = content.querySelectorAll(`[data-booking="${e.target.getAttribute('data-booking')}"].rating-star${isDriverRating ? '.driver-rating' : '.experience-rating'}`);
                 starsForBooking.forEach((s, idx) => {
                     if (idx < rating) {
                         s.style.color = '#fcd34d';
@@ -1219,7 +1347,8 @@ async function renderTouristFeedbackView(sidebar, content) {
 
             star.addEventListener('mouseout', (e) => {
                 const bookingId = e.target.getAttribute('data-booking');
-                const starsForBooking = content.querySelectorAll(`[data-booking="${bookingId}"].rating-star`);
+                const isDriverRating = e.target.classList.contains('driver-rating');
+                const starsForBooking = content.querySelectorAll(`[data-booking="${bookingId}"].rating-star${isDriverRating ? '.driver-rating' : '.experience-rating'}`);
                 const selectedRating = starsForBooking[0]?.getAttribute('data-selected-rating') || 0;
                 starsForBooking.forEach((s, idx) => {
                     if (idx < selectedRating) {
@@ -1235,22 +1364,43 @@ async function renderTouristFeedbackView(sidebar, content) {
         content.querySelectorAll('.submit-feedback-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const bookingId = e.target.getAttribute('data-booking');
-                const starsForBooking = content.querySelectorAll(`[data-booking="${bookingId}"].rating-star`);
-                const rating = starsForBooking[0]?.getAttribute('data-selected-rating') || 0;
+                const experienceStars = content.querySelectorAll(`[data-booking="${bookingId}"].experience-rating`);
+                const driverStars = content.querySelectorAll(`[data-booking="${bookingId}"].driver-rating`);
+                const experienceRating = experienceStars[0]?.getAttribute('data-selected-rating') || 0;
+                const driverRating = driverStars[0]?.getAttribute('data-selected-rating') || 0;
                 const feedback = content.querySelector(`.feedback-text[data-booking="${bookingId}"]`).value;
 
-                if (!rating || rating === '0') {
-                    showToast('Please rate your experience', '#ef4444');
+                if (!experienceRating || experienceRating === '0') {
+                    showToast('Please rate your overall experience', '#ef4444');
                     return;
                 }
 
                 try {
+                    // Submit experience feedback
                     await api.createFeedback({
                         bookingId: bookingId,
-                        rating: parseInt(rating),
+                        rating: parseInt(experienceRating),
                         comment: feedback,
+                        type: 'SERVICE',
                         createdAt: new Date().toISOString()
                     });
+
+                    // Submit driver feedback if provided
+                    if (driverRating && driverRating !== '0') {
+                        // Get driver ID from booking
+                        const booking = completedBookings.find(b => b.id === bookingId);
+                        if (booking && booking.assignedDriverId) {
+                            await api.createFeedback({
+                                bookingId: bookingId,
+                                targetUserId: booking.assignedDriverId,
+                                rating: parseInt(driverRating),
+                                comment: feedback ? `Driver feedback: ${feedback}` : 'Driver rating submitted',
+                                type: 'DRIVER',
+                                createdAt: new Date().toISOString()
+                            });
+                        }
+                    }
+
                     showToast('Thank you for your feedback!', '#10b981');
                     setTimeout(() => renderTouristFeedbackView(sidebar, content), 1000);
                 } catch (err) {

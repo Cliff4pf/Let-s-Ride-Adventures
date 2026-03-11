@@ -1,11 +1,169 @@
 import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
 import { attachLogoutListener } from "./logout-helper.js";
-import { initializeProfileModal } from "./profile-modal.js";
+import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
+import { showBookingDetailModal } from "./booking-detail-modal.js";
 
 let secretaryState = {
     activeTab: 'dashboard' // 'dashboard', 'create-booking', 'update-bookings'
 };
+
+// Setup menu bar events (settings dropdown, notifications, messages)
+function setupMenuBarEvents() {
+    const settingsBtn = document.getElementById('settingsBtnTopbar');
+    const settingsDropdown = document.getElementById('settingsDropdown');
+    const profileSettingLink = document.getElementById('profileSettingLink');
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const logoutSettingBtn = document.getElementById('logoutSettingBtn');
+    const notificationBtn = document.getElementById('notificationBtnTopbar');
+    const messageBtn = document.getElementById('messageBtnTopbar');
+
+    // Settings dropdown toggle
+    if (settingsBtn && settingsDropdown) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            settingsDropdown.style.display = settingsDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!settingsBtn.contains(e.target) && !settingsDropdown.contains(e.target)) {
+                settingsDropdown.style.display = 'none';
+            }
+        });
+
+        // Dropdown hover effects
+        settingsDropdown.querySelectorAll('a, button').forEach(item => {
+            item.addEventListener('mouseenter', () => {
+                item.style.background = 'var(--surface-hover)';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+            });
+        });
+    }
+
+    // Profile link
+    if (profileSettingLink) {
+        profileSettingLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            settingsDropdown.style.display = 'none';
+            openProfileModal();
+        });
+    }
+
+    // Theme toggle
+    if (themeToggleBtn) {
+        const currentTheme = localStorage.getItem('ridehub_theme') || 'light';
+        const updateThemeButton = () => {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            themeToggleBtn.innerHTML = isDark ? 
+                '☀️ <span>Light Mode</span>' : 
+                '🌙 <span>Dark Mode</span>';
+        };
+        
+        updateThemeButton();
+        
+        themeToggleBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const newTheme = isDark ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('ridehub_theme', newTheme);
+            updateThemeButton();
+            showToast(`Switched to ${newTheme} mode`, '#10b981');
+            settingsDropdown.style.display = 'none';
+        });
+    }
+
+    // Logout button in settings
+    if (logoutSettingBtn) {
+        logoutSettingBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const { signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
+            const { auth } = await import('./firebase.js');
+            await signOut(auth);
+            localStorage.removeItem('ridehub_token');
+            localStorage.removeItem('ridehub_role');
+            window.location.href = 'index.html';
+        });
+    }
+
+    // Notifications button - show booking notifications
+    if (notificationBtn) {
+        notificationBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            showSecretaryNotifications();
+        });
+    }
+
+    // Message button - show booking notifications
+    if (messageBtn) {
+        messageBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            showSecretaryNotifications();
+        });
+    }
+}
+
+// Show secretary notifications (recent bookings)
+async function showSecretaryNotifications() {
+    try {
+        const bookingsRes = await api.getBookings();
+        const bookings = await bookingsRes.json();
+        
+        // Get recent pending bookings (last 24 hours)
+        const recentBookings = bookings.filter(b => {
+            const bookingDate = new Date(b.createdAt || b.startDate);
+            const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+            return bookingDate > oneDayAgo && (b.status === 'PENDING' || b.status === 'APPROVED');
+        });
+
+        if (recentBookings.length === 0) {
+            showToast('No recent booking notifications', '#6b7280');
+            return;
+        }
+
+        // Create notification modal
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header">
+                    <h3>Recent Booking Notifications</h3>
+                    <button class="modal-close">&times;</button>
+                </div>
+                <div class="modal-body">
+                    ${recentBookings.map(b => `
+                        <div class="notification-item" style="padding: 1rem; border-bottom: 1px solid var(--border-color);">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong>${b.pickupLocation || 'N/A'} → ${b.destination || 'N/A'}</strong>
+                                    <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                        ${new Date(b.startDate).toLocaleString()} • KSH ${b.price || 0}
+                                    </div>
+                                </div>
+                                <span class="badge badge-${b.status.toLowerCase()}">${b.status}</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+        
+        // Close modal functionality
+        modal.querySelector('.modal-close').addEventListener('click', () => modal.remove());
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) modal.remove();
+        });
+
+    } catch (error) {
+        console.error('Failed to load notifications:', error);
+        showToast('Failed to load notifications', '#ef4444');
+    }
+}
 
 export async function renderSecretaryUI(sidebar, content) {
     sidebar.innerHTML = `
@@ -32,6 +190,9 @@ export async function renderSecretaryUI(sidebar, content) {
 
     // Initialize profile modal
     initializeProfileModal();
+
+    // Setup menu bar events
+    setupMenuBarEvents();
 
     if (secretaryState.activeTab === 'dashboard') {
         await renderDispatcherDashboard(content);
@@ -190,6 +351,11 @@ async function renderCreateBookingView(content) {
 }
 
 async function renderDispatcherDashboard(content) {
+    // listen for updates resulting from actions in detail modal
+    if (!renderDispatcherDashboard._listenerAttached) {
+        window.addEventListener('bookingUpdated', () => renderDispatcherDashboard(content));
+        renderDispatcherDashboard._listenerAttached = true;
+    }
 
     content.innerHTML = `<div style="padding:2rem;text-align:center;">Loading Dispatcher Board...</div>`;
 
@@ -211,9 +377,13 @@ async function renderDispatcherDashboard(content) {
             throw new Error(`Failed to load vehicles: ${vehiclesRes.status} ${vehiclesRes.statusText}`);
         }
 
-        const allBookings = await bookingsRes.json();
-        const allUsers = await driversRes.json();
-        const allVehicles = await vehiclesRes.json();
+        const allBookingsResp = await bookingsRes.json();
+        const allUsersResp = await driversRes.json();
+        const allVehiclesResp = await vehiclesRes.json();
+
+        const allBookings = allBookingsResp.data || allBookingsResp || [];
+        const allUsers = allUsersResp.data || allUsersResp || [];
+        const allVehicles = allVehiclesResp.data || allVehiclesResp || [];
 
         const pendingBookings = allBookings.filter(b => b.status === "PENDING");
         const approvedBookings = allBookings.filter(b => b.status === "APPROVED");
@@ -225,13 +395,13 @@ async function renderDispatcherDashboard(content) {
             tableHtml = `<tr><td colspan="5" style="text-align:center;">No bookings need attention.</td></tr>`;
         } else {
             tableHtml += pendingBookings.map(b => `
-                <tr>
+                <tr class="booking-row" data-booking='${JSON.stringify(b)}' style="cursor:pointer;">
                     <td>${new Date(b.startDate).toLocaleDateString()}</td>
                     <td>${b.destination || '-'}</td>
                     <td><span class="badge badge-pending">PENDING</span></td>
                     <td>
-                        <button class="btn btn-primary approve-btn" data-id="${b.id}" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Approve</button>
-                        <button class="btn btn-secondary reject-btn" data-id="${b.id}" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Reject</button>
+                        <button class="btn btn-primary approve-btn" data-id="${b.id}" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; margin-right:0.25rem; min-width:4rem; display:inline-block; text-align:center;">Approve</button>
+                        <button class="btn btn-danger reject-btn" data-id="${b.id}" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; min-width:4rem; display:inline-block; text-align:center;">Reject</button>
                     </td>
                 </tr>
             `).join('');
@@ -240,7 +410,7 @@ async function renderDispatcherDashboard(content) {
                 const driverOptions = activeDrivers.map(d => `<option value="${d.uid}">${d.fullName}</option>`).join('');
                 const vehicleOptions = availableVehicles.map(v => `<option value="${v.id}">${v.registrationNumber} (${v.model})</option>`).join('');
                 return `
-                <tr>
+                <tr class="booking-row" data-booking='${JSON.stringify(b)}' style="cursor:pointer;">
                     <td>${new Date(b.startDate).toLocaleDateString()}</td>
                     <td>${b.destination || '-'}</td>
                     <td><span class="badge badge-approved">APPROVED</span></td>
@@ -302,10 +472,18 @@ async function renderDispatcherDashboard(content) {
         `;
 
         content.querySelectorAll('.approve-btn').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
+            btn.addEventListener('click', (e) => {
                 const id = e.target.getAttribute('data-id');
-                await api.approveBooking(id);
-                renderDispatcherDashboard(content);
+                const booking = pendingBookings.find(b => b.id === id);
+                if (booking) {
+                    showBookingDetailModal(booking, allUsers);
+                    // once modal is shown, trigger its approve button so assignment section appears
+                    setTimeout(() => {
+                        const modalEl = document.getElementById('bookingDetailModal');
+                        const aprov = modalEl?.querySelector('#approveBookingBtn');
+                        if (aprov) aprov.click();
+                    }, 200);
+                }
             });
         });
 
@@ -315,6 +493,23 @@ async function renderDispatcherDashboard(content) {
                 if (confirm('Reject this booking?')) {
                     await api.rejectBooking(id);
                     renderDispatcherDashboard(content);
+                }
+            });
+        });
+
+        // make rows clickable to review booking details
+        content.querySelectorAll('.booking-row').forEach(row => {
+            row.addEventListener('click', (e) => {
+                // ignore clicks on buttons or selects inside the row
+                if (e.target.closest('button') || e.target.closest('select')) return;
+                const data = row.getAttribute('data-booking');
+                if (data) {
+                    try {
+                        const b = JSON.parse(data);
+                        showBookingDetailModal(b, allUsers);
+                    } catch (err) {
+                        console.error('Error parsing booking data from row', err);
+                    }
                 }
             });
         });
@@ -363,7 +558,7 @@ async function renderUpdateBookingsView(content) {
             tableHtml = `<tr><td colspan="6" style="text-align:center;">No bookings available for update.</td></tr>`;
         } else {
             tableHtml = updateableBookings.map(b => `
-                <tr>
+                <tr class="booking-row" data-booking-id="${b.id}" style="cursor: pointer; transition: background-color 0.2s ease;" data-booking='${JSON.stringify(b)}'>
                     <td>${new Date(b.startDate).toLocaleDateString()}</td>
                     <td>${b.pickupLocation || '-'}</td>
                     <td>${b.destination || '-'}</td>
@@ -542,6 +737,38 @@ async function renderUpdateBookingsView(content) {
             }
         });
 
+        // Add click handlers for booking rows to show detail modal
+        content.querySelectorAll('.booking-row').forEach(row => {
+            row.addEventListener('mouseenter', () => {
+                row.style.backgroundColor = 'var(--surface-hover)';
+            });
+            row.addEventListener('mouseleave', () => {
+                row.style.backgroundColor = 'transparent';
+            });
+            row.addEventListener('click', (e) => {
+                // Don't open modal if clicking on a button
+                if (e.target.closest('button')) return;
+                
+                const bookingData = row.getAttribute('data-booking');
+                if (bookingData) {
+                    try {
+                        const booking = JSON.parse(bookingData);
+                        // Fetch all users for the modal
+                        api.getAllUsers().then(res => {
+                            if (res.ok) {
+                                res.json().then(userData => {
+                                    const users = userData.data || userData || [];
+                                    showBookingDetailModal(booking, users);
+                                });
+                            }
+                        }).catch(err => console.error('Error fetching users:', err));
+                    } catch (err) {
+                        console.error('Error parsing booking data:', err);
+                    }
+                }
+            });
+        });
+
     } catch (e) {
         console.error(e);
         content.innerHTML = `<div style="padding:2rem;color:red;">Error loading bookings for update.</div>`;
@@ -557,7 +784,14 @@ function populateEditForm(content, booking) {
     modal.querySelector('#editGuests').value = booking.numberOfGuests || 1;
     modal.querySelector('#editPickup').value = booking.pickupLocation || '';
     modal.querySelector('#editDestination').value = booking.destination || '';
-    modal.querySelector('#editStartDate').value = booking.startDate ? new Date(booking.startDate).toISOString().slice(0, 16) : '';
+    if (booking.startDate) {
+        const dt = new Date(booking.startDate);
+        // adjust to local timezone for datetime-local input
+        dt.setMinutes(dt.getMinutes() - dt.getTimezoneOffset());
+        modal.querySelector('#editStartDate').value = dt.toISOString().slice(0, 16);
+    } else {
+        modal.querySelector('#editStartDate').value = '';
+    }
     modal.querySelector('#editPrice').value = booking.price || 0;
     modal.querySelector('#editSpecialRequests').value = booking.specialRequests || '';
 }

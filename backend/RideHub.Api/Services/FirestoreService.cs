@@ -354,6 +354,13 @@ namespace RideHub.Api.Services
             return snapshot.Documents.Select(d => d.ConvertTo<Feedback>()).ToList();
         }
 
+        public async Task<List<Feedback>> GetAllFeedbackAsync()
+        {
+            Query query = _firestoreDb.Collection("feedback").OrderByDescending("CreatedAt");
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            return snapshot.Documents.Select(d => d.ConvertTo<Feedback>()).ToList();
+        }
+
         public async Task UpdateFeedbackAsync(Feedback feedback)
         {
             DocumentReference docRef = _firestoreDb.Collection("feedback").Document(feedback.Id);

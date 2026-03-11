@@ -31,6 +31,9 @@ onAuthStateChanged(auth, async (user) => {
         const apiRes = await response.json();
         const profile = apiRes.data;
 
+        console.log('User profile:', profile);
+        console.log('User role:', profile.role);
+
         if (profile.status !== 'Active') {
             throw new Error('Account inactive');
         }
@@ -74,17 +77,22 @@ async function initializeDashboard(role, profile) {
     contentArea.innerHTML = '';
 
     // 3. Render Role-Specific UI
-    switch (role) {
-        case 'Tourist':
+    console.log('Initializing dashboard for role:', role.toLowerCase());
+    switch (role.toLowerCase()) {
+        case 'tourist':
+            console.log('Rendering tourist UI');
             await renderTouristUI(sidebarMenu, contentArea);
             break;
-        case 'Driver':
+        case 'driver':
+            console.log('Rendering driver UI');
             await renderDriverUI(sidebarMenu, contentArea);
             break;
-        case 'Secretary':
+        case 'secretary':
+            console.log('Rendering secretary UI');
             await renderSecretaryUI(sidebarMenu, contentArea);
             break;
-        case 'Admin':
+        case 'admin':
+            console.log('Rendering admin UI');
             await renderAdminUI(sidebarMenu, contentArea);
             break;
         default:

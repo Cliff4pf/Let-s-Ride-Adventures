@@ -3,6 +3,39 @@ import { signInWithEmailAndPassword, getIdToken, signOut, sendPasswordResetEmail
 
 const API_BASE_URL = 'http://localhost:5202/api';
 const googleProvider = new GoogleAuthProvider();
+
+// utility: translate Firebase auth error codes into user-friendly messages
+function firebaseErrorMessage(error) {
+    if (!error || !error.code) {
+        return error?.message || 'Authentication error. Please try again.';
+    }
+
+    switch (error.code) {
+        case 'auth/network-request-failed':
+            return 'Network error. Please check your connection.';
+        case 'auth/invalid-email':
+            return 'Please enter a valid email address.';
+        case 'auth/user-not-found':
+            return 'No account found with this email address.';
+        case 'auth/wrong-password':
+            return 'Incorrect password. Please try again.';
+        case 'auth/user-disabled':
+            return 'Your account has been disabled. Contact support.';
+        case 'auth/too-many-requests':
+            return 'Too many attempts. Please try again later.';
+        case 'auth/email-already-in-use':
+            return 'This email is already in use. Try logging in or resetting your password.';
+        case 'auth/popup-closed-by-user':
+            return 'Sign‑in was cancelled. Please try again.';
+        case 'auth/popup-blocked':
+            return 'Popup was blocked by the browser. Allow popups and try again.';
+        case 'auth/cancelled-popup-request':
+            return 'Sign‑in request was cancelled. Please retry.';
+        default:
+            return error.message || 'Authentication error. Please try again.';
+    }
+}
+
 // Email Login Button - Show password form
 const emailLoginBtn = document.getElementById('emailLoginBtn');
 const loginForm = document.getElementById('loginForm');
@@ -87,16 +120,11 @@ if (resetForm) {
             }, 2000);
         } catch (error) {
             console.error('Reset email error:', error);
-            let errorMsg = 'Failed to send reset email.';
-            
+            // reuse friendly translation and add a fallback
+            let errorMsg = firebaseErrorMessage(error);
             if (error.code === 'auth/user-not-found') {
+                // already handled above, but ensure clarity
                 errorMsg = 'No account found with this email address.';
-            } else if (error.code === 'auth/invalid-email') {
-                errorMsg = 'Please enter a valid email address.';
-            } else if (error.code === 'auth/too-many-requests') {
-                errorMsg = 'Too many attempts. Please try again later.';
-            } else {
-                errorMsg = error.message || 'Failed to send reset email. Make sure the email is correct.';
             }
             
             resetError.textContent = errorMsg;
@@ -162,7 +190,9 @@ if (loginForm) {
             window.location.href = 'dashboard.html';
         } catch (error) {
             console.error("Login failed:", error);
-            errorDiv.textContent = error.message || "Invalid email or password.";
+            // translate firebase error codes or use provided message
+            const friendly = firebaseErrorMessage(error);
+            errorDiv.textContent = friendly;
             errorDiv.style.display = 'block';
         } finally {
             loginBtn.disabled = false;
@@ -273,14 +303,9 @@ if (googleLoginBtn) {
             }
         } catch (error) {
             console.error("Google login failed:", error);
-            
-            if (error.code === 'auth/popup-closed-by-user') {
-                errorMessage.textContent = 'Sign-in cancelled. Please try again.';
-            } else if (error.code === 'auth/network-request-failed') {
-                errorMessage.textContent = 'Network error. Please check your connection.';
-            } else {
-                errorMessage.textContent = error.message || 'Failed to sign in with Google.';
-            }
+            // map common codes, fall back to helper
+            const friendly = firebaseErrorMessage(error);
+            errorMessage.textContent = friendly;
             errorDiv.style.display = 'block';
         } finally {
             googleLoginBtn.disabled = false;

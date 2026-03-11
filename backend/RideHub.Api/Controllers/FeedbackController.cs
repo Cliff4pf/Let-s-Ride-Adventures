@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Authorization;
 using RideHub.Api.Models;
 using RideHub.Api.Services;
 using System.Linq;
@@ -40,15 +41,12 @@ namespace RideHub.Api.Controllers
             return Ok(ApiResponse<object>.Ok(new { id }, "Feedback submitted successfully."));
         }
 
-        // GET: api/feedback/my
-        [HttpGet("my")]
-        public async Task<IActionResult> GetMyFeedback()
+        // GET: api/feedback
+        [HttpGet]
+        [Authorize(Roles = "Admin,Secretary")]
+        public async Task<IActionResult> GetAllFeedback()
         {
-            var userId = GetCurrentUserId();
-            if (string.IsNullOrEmpty(userId))
-                return Unauthorized(ApiResponse.Error("Unauthorized"));
-
-            var feedbackList = await _firestoreService.GetFeedbackByUserAsync(userId);
+            var feedbackList = await _firestoreService.GetAllFeedbackAsync();
             return Ok(feedbackList);
         }
 

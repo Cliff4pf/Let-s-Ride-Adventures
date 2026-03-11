@@ -7,6 +7,365 @@ let driverState = {
     activeTab: 'trips' // 'trips', 'schedule', 'history'
 };
 
+// Setup menu bar events (settings dropdown, notifications, messages)
+function setupMenuBarEvents() {
+    const settingsBtn = document.getElementById('settingsBtnTopbar');
+    const settingsDropdown = document.getElementById('settingsDropdown');
+    const profileSettingLink = document.getElementById('profileSettingLink');
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const logoutSettingBtn = document.getElementById('logoutSettingBtn');
+    const notificationBtn = document.getElementById('notificationBtnTopbar');
+    const messageBtn = document.getElementById('messageBtnTopbar');
+
+    // Settings dropdown toggle
+    if (settingsBtn && settingsDropdown) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            settingsDropdown.style.display = settingsDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!settingsBtn.contains(e.target) && !settingsDropdown.contains(e.target)) {
+                settingsDropdown.style.display = 'none';
+            }
+        });
+
+        // Dropdown hover effects
+        settingsDropdown.querySelectorAll('a, button').forEach(item => {
+            item.addEventListener('mouseenter', () => {
+                item.style.background = 'var(--surface-hover)';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+            });
+        });
+    }
+
+    // Profile link
+    if (profileSettingLink) {
+        profileSettingLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            settingsDropdown.style.display = 'none';
+            // Driver profile modal would be implemented here
+            alert('Profile modal not yet implemented for drivers');
+        });
+    }
+
+    // Theme toggle
+    if (themeToggleBtn) {
+        const currentTheme = localStorage.getItem('ridehub_theme') || 'light';
+        const updateThemeButton = () => {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            themeToggleBtn.innerHTML = isDark ? 
+                '☀️ <span>Light Mode</span>' : 
+                '🌙 <span>Dark Mode</span>';
+        };
+        
+        updateThemeButton();
+        
+        themeToggleBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const newTheme = isDark ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('ridehub_theme', newTheme);
+            updateThemeButton();
+            // Show toast would need to be imported
+            alert(`Switched to ${newTheme} mode`);
+            settingsDropdown.style.display = 'none';
+        });
+    }
+
+    // Logout button in settings
+    if (logoutSettingBtn) {
+        logoutSettingBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const { signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
+            const { auth } = await import('../firebase.js');
+            await signOut(auth);
+            localStorage.removeItem('ridehub_token');
+            localStorage.removeItem('ridehub_role');
+            window.location.href = 'index.html';
+        });
+    }
+
+    // Notifications button - show trip notifications
+    if (notificationBtn) {
+        notificationBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            showDriverNotifications();
+        });
+    }
+
+    // Message button - show trip notifications
+    if (messageBtn) {
+        messageBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            showDriverNotifications();
+        });
+    }
+}
+
+// Show driver notifications (assigned trips)
+async function showDriverNotifications() {
+    try {
+        const bookingsRes = await api.getBookings();
+        const bookings = await bookingsRes.json();
+        const usersRes = await api.getAllUsers();
+        const usersData = await usersRes.json();
+        const allUsers = usersData.data || usersData || [];
+        
+        // Get driver's newly assigned trips (ASSIGNED status = just assigned, not started yet)
+        const assignedTrips = bookings.filter(b => b.assignedDriverId && b.status === 'ASSIGNED');
+
+        if (assignedTrips.length === 0) {
+            const noNotifModal = document.createElement('div');
+            noNotifModal.className = 'modal-overlay';
+            noNotifModal.style.display = 'flex';
+            noNotifModal.innerHTML = `
+                <div class="modal-content" style="max-width: 500px; text-align: center; padding: 2rem;">
+                    <h3>No New Assignments</h3>
+                    <p style="color: var(--text-secondary); margin-top: 1rem;">You don't have any new trip assignments at the moment.</p>
+                    <button class="btn btn-primary" style="margin-top: 1rem;">Close</button>
+                </div>
+            `;
+            document.body.appendChild(noNotifModal);
+            noNotifModal.querySelector('button').addEventListener('click', () => noNotifModal.remove());
+            noNotifModal.addEventListener('click', e => {
+                if (e.target === noNotifModal) noNotifModal.remove();
+            });
+            return;
+        }
+
+        // Create notification modal with contact details and actions
+        const modal = document.createElement('div');
+        modal.className = 'modal-overlay';
+        modal.style.display = 'flex';
+        modal.style.zIndex = '3000';
+        
+        modal.innerHTML = `
+            <div class="modal-content" style="max-width: 700px; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column;">
+                <div class="modal-header" style="border-bottom: 2px solid var(--border-color); padding: 1.5rem;">
+                    <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
+                        🔔 New Trip Assignments
+                        <span style="background: #3b82f6; color: white; font-size: 0.75rem; padding: 0.25rem 0.75rem; border-radius: 999px; font-weight: bold;">${assignedTrips.length}</span>
+                    </h3>
+                    <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">×</button>
+                </div>
+                
+                <div style="flex: 1; overflow-y: auto; padding: 1rem;">
+                    ${assignedTrips.map((b, idx) => {
+                        const tourist = allUsers.find(u => u.uid === b.userId);
+                        const vehicle = b.vehicleId ? `Vehicle assigned: ${b.vehicleId}` : 'No vehicle info';
+                        const startTime = new Date(b.startDate);
+                        const timeStr = startTime.toLocaleString();
+                        const fareAmount = b.price ? `KSH ${parseInt(b.price).toLocaleString()}` : 'Price TBD';
+                        
+                        return `
+                            <div class="assignment-card" data-booking-id="${b.id}" style="
+                                padding: 1.5rem; 
+                                border-left: 4px solid #3b82f6;
+                                background: var(--surface-hover); 
+                                margin-bottom: 1rem; 
+                                border-radius: 8px;
+                                transition: all 0.3s ease;
+                            ">
+                                <!-- Trip Overview -->
+                                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
+                                    <div style="flex: 1;">
+                                        <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.5rem;">
+                                            📍 ${b.pickupLocation || 'Pickup location'}
+                                        </div>
+                                        <div style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                                            ↓
+                                        </div>
+                                        <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">
+                                            🎯 ${b.destination || 'Destination'}
+                                        </div>
+                                    </div>
+                                    <span class="badge" style="background: #3b82f6; color: white; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem;">ASSIGNED</span>
+                                </div>
+
+                                <!-- Trip Details Grid -->
+                                <div style="background: white; padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+                                        <div>
+                                            <p style="margin: 0 0 0.25rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Scheduled Time</p>
+                                            <p style="margin: 0; font-size: 0.95rem; color: var(--text-primary); font-weight: 600;">🕐 ${timeStr}</p>
+                                        </div>
+                                        <div>
+                                            <p style="margin: 0 0 0.25rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Trip Fare</p>
+                                            <p style="margin: 0; font-size: 0.95rem; color: #10b981; font-weight: 600;">💰 ${fareAmount}</p>
+                                        </div>
+                                        <div>
+                                            <p style="margin: 0 0 0.25rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Passengers</p>
+                                            <p style="margin: 0; font-size: 0.95rem; color: var(--text-primary); font-weight: 600;">👥 ${b.numberOfGuests || 1} guest(s)</p>
+                                        </div>
+                                        <div>
+                                            <p style="margin: 0 0 0.25rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Vehicle Type</p>
+                                            <p style="margin: 0; font-size: 0.95rem; color: var(--text-primary); font-weight: 600;">🚗 ${b.vehicleType || 'Transfer'}</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Tourist Contact Info -->
+                                <div style="background: var(--surface-color); padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
+                                    <h4 style="margin: 0 0 0.75rem; color: var(--text-primary); font-size: 0.9rem; font-weight: 600;">👤 Tourist Details</h4>
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.875rem;">
+                                        <div>
+                                            <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">Name</p>
+                                            <p style="margin: 0; font-weight: 600; color: var(--text-primary);">${tourist?.fullName || 'Unknown'}</p>
+                                        </div>
+                                        <div>
+                                            <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">Phone</p>
+                                            <p style="margin: 0; font-weight: 600; color: var(--text-primary);"><a href="tel:${tourist?.phoneNumber}" style="color: #3b82f6; text-decoration: none;">${tourist?.phoneNumber || 'N/A'}</a></p>
+                                        </div>
+                                        <div style="grid-column: 1 / -1;">
+                                            <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">Email</p>
+                                            <p style="margin: 0; font-weight: 600; color: var(--text-primary);"><a href="mailto:${tourist?.email}" style="color: #3b82f6; text-decoration: none;">${tourist?.email || 'N/A'}</a></p>
+                                        </div>
+                                        ${b.specialRequests ? `
+                                            <div style="grid-column: 1 / -1;">
+                                                <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">Special Requests</p>
+                                                <p style="margin: 0; font-weight: 600; color: var(--text-primary);">💬 ${b.specialRequests}</p>
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                </div>
+
+                                <!-- Action Buttons -->
+                                <div style="display: flex; gap: 0.75rem;">
+                                    <button class="btn-accept-trip" data-booking-id="${b.id}" style="
+                                        flex: 1; 
+                                        padding: 0.75rem; 
+                                        background: #10b981; 
+                                        color: white; 
+                                        border: none; 
+                                        border-radius: 6px; 
+                                        font-weight: 600;
+                                        cursor: pointer;
+                                        transition: background 0.2s;
+                                    ">
+                                        ✓ Accept Trip
+                                    </button>
+                                    <button class="btn-decline-trip" data-booking-id="${b.id}" style="
+                                        flex: 1; 
+                                        padding: 0.75rem; 
+                                        background: #ef4444; 
+                                        color: white; 
+                                        border: none; 
+                                        border-radius: 6px; 
+                                        font-weight: 600;
+                                        cursor: pointer;
+                                        transition: background 0.2s;
+                                    ">
+                                        ✗ Decline
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+        
+        // Close button
+        const closeBtn = modal.querySelector('.modal-close-btn');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                modal.style.opacity = '0';
+                setTimeout(() => modal.remove(), 300);
+            });
+        }
+        
+        // Close on overlay click
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) {
+                modal.style.opacity = '0';
+                setTimeout(() => modal.remove(), 300);
+            }
+        });
+
+        // Accept trip handlers
+        modal.querySelectorAll('.btn-accept-trip').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const bookingId = btn.getAttribute('data-booking-id');
+                btn.disabled = true;
+                btn.textContent = '⟳ Processing...';
+                
+                try {
+                    await api.updateBookingStatus(bookingId, 'IN_PROGRESS');
+                    btn.textContent = '✓ Accepted';
+                    btn.style.background = '#059669';
+                    
+                    setTimeout(() => {
+                        modal.remove();
+                        alert('Trip accepted! You may now begin the journey.');
+                        // Refresh trips view
+                        const content = document.querySelector('.main-content');
+                        if (content) {
+                            renderTripsView(content);
+                        }
+                    }, 500);
+                } catch (error) {
+                    console.error('Failed to accept trip:', error);
+                    btn.disabled = false;
+                    btn.textContent = '✓ Accept Trip';
+                    alert('Failed to accept trip. Please try again.');
+                }
+            });
+        });
+
+        // Decline trip handlers
+        modal.querySelectorAll('.btn-decline-trip').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const bookingId = btn.getAttribute('data-booking-id');
+                
+                if (!confirm('Are you sure you want to decline this trip?')) {
+                    return;
+                }
+                
+                btn.disabled = true;
+                btn.textContent = '⟳ Processing...';
+                
+                try {
+                    // Set status back to APPROVED so admin can reassign
+                    await api.updateBookingStatus(bookingId, 'APPROVED');
+                    btn.textContent = '✗ Declined';
+                    btn.style.background = '#991b1b';
+                    
+                    setTimeout(() => {
+                        modal.remove();
+                        alert('Trip declined. It will be available for other drivers.');
+                        // Refresh trips view
+                        const content = document.querySelector('.main-content');
+                        if (content) {
+                            renderTripsView(content);
+                        }
+                    }, 500);
+                } catch (error) {
+                    console.error('Failed to decline trip:', error);
+                    btn.disabled = false;
+                    btn.textContent = '✗ Decline';
+                    alert('Failed to decline trip. Please try again.');
+                }
+            });
+        });
+
+        // Fade in modal
+        setTimeout(() => {
+            modal.style.opacity = '1';
+        }, 10);
+
+    } catch (error) {
+        console.error('Failed to load notifications:', error);
+        alert('Failed to load notifications');
+    }
+}
+
 export async function renderDriverUI(sidebar, content) {
     sidebar.innerHTML = `
         ${createNavItem('Assigned Trips', icons.car, 'trips', driverState.activeTab === 'trips')}
@@ -32,6 +391,9 @@ export async function renderDriverUI(sidebar, content) {
 
     // Initialize profile modal
     initializeProfileModal();
+
+    // Setup menu bar events
+    setupMenuBarEvents();
 
     if (driverState.activeTab === 'trips') {
         await renderTripsView(content);

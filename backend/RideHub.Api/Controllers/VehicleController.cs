@@ -99,5 +99,37 @@ namespace RideHub.Api.Controllers
             await _firestoreService.DeleteVehicleAsync(id);
             return Ok(new { message = "Vehicle deleted successfully" });
         }
+
+        [RoleAuthorize("Admin", "Secretary")]
+        [HttpPatch("{id}/assign-driver")]
+        public async Task<IActionResult> AssignDriver(string id, [FromBody] AssignDriverRequest request)
+        {
+            var vehicle = await _firestoreService.GetVehicleAsync(id);
+            if (vehicle == null) return NotFound("Vehicle not found");
+
+            var driver = await _firestoreService.GetUserAsync(request.DriverId);
+            if (driver == null || driver.Role != "Driver") return BadRequest("Invalid driver");
+
+            vehicle.AssignedDriverId = request.DriverId;
+            await _firestoreService.UpdateVehicleAsync(vehicle);
+            return Ok(new { message = "Driver assigned to vehicle successfully" });
+        }
+
+        [RoleAuthorize("Admin", "Secretary")]
+        [HttpPatch("{id}/unassign-driver")]
+        public async Task<IActionResult> UnassignDriver(string id)
+        {
+            var vehicle = await _firestoreService.GetVehicleAsync(id);
+            if (vehicle == null) return NotFound("Vehicle not found");
+
+            vehicle.AssignedDriverId = null;
+            await _firestoreService.UpdateVehicleAsync(vehicle);
+            return Ok(new { message = "Driver unassigned from vehicle successfully" });
+        }
+    }
+
+    public class AssignDriverRequest
+    {
+        public string DriverId { get; set; } = string.Empty;
     }
 }

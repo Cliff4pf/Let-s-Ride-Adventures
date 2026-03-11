@@ -63,6 +63,12 @@ const api = {
         });
     },
 
+    reinstateUser: async function (userId) {
+        return this.fetchWithAuth(`/User/${userId}/reinstate`, {
+            method: 'PATCH'
+        });
+    },
+
     // --- Bookings API ---
     getBookings: async function () {
         return this.fetchWithAuth('/Booking');
@@ -76,8 +82,9 @@ const api = {
     },
 
     approveBooking: async function (bookingId) {
+        // backend expects PATCH for approval
         return this.fetchWithAuth(`/Booking/${bookingId}/approve`, {
-            method: 'PUT'
+            method: 'PATCH'
         });
     },
 
@@ -134,6 +141,15 @@ const api = {
         });
     },
 
+    updateVehicle: async function(vehicleId, updateData) {
+        // Include the ID in the request body (backend requires it to match URL param)
+        const body = { ...updateData, id: vehicleId };
+        return this.fetchWithAuth(`/Vehicle/${vehicleId}`, {
+            method: 'PUT',
+            body: JSON.stringify(body)
+        });
+    },
+
     deleteVehicle: async function(vehicleId) {
         return this.fetchWithAuth(`/Vehicle/${vehicleId}`, {
             method: 'DELETE'
@@ -151,7 +167,18 @@ const api = {
             method: 'PUT'
         });
     },
+    assignDriverToVehicle: async function (driverId, vehicleId) {
+        return this.fetchWithAuth(`/Vehicle/${vehicleId}/assign-driver`, {
+            method: 'PATCH',
+            body: JSON.stringify({ driverId })
+        });
+    },
 
+    unassignDriverFromVehicle: async function (vehicleId) {
+        return this.fetchWithAuth(`/Vehicle/${vehicleId}/unassign-driver`, {
+            method: 'PATCH'
+        });
+    },
     // --- Analytics API ---
     getAnalytics: async function () {
         return this.fetchWithAuth('/Analytics/dashboard');

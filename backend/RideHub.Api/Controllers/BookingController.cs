@@ -218,12 +218,25 @@ namespace RideHub.Api.Controllers
 
             var tourist = await _firestoreService.GetUserAsync(booking.UserId);
 
+            // Update vehicle status to Reserved when booking is assigned
+            vehicle.Status = "reserved";
+            await _firestoreService.UpdateVehicleAsync(vehicle);
+
             if (tourist != null)
             {
                 await _emailService.SendEmail(
                     tourist.Email,
                     "RideHub Assignment Complete",
-                    $"Your trip to {booking.Destination} has been assigned. Driver: {driver.FullName}, Vehicle: {vehicle.RegistrationNumber} ({vehicle.Model})."
+                    $"Your trip to {booking.Destination} has been assigned.\n\n" +
+                    $"Vehicle: {vehicle.Make} {vehicle.Model} ({vehicle.VehicleType})\n" +
+                    $"Registration: {vehicle.RegistrationNumber}\n" +
+                    $"Seating: {vehicle.SeatingCapacity} passengers\n\n" +
+                    $"Driver: {driver.FullName}\n" +
+                    $"Contact: {driver.PhoneNumber}\n\n" +
+                    $"Pickup: {booking.PickupLocation}\n" +
+                    $"Destination: {booking.Destination}\n" +
+                    $"Date: {booking.StartDate:MMMM dd, yyyy @ HH:mm}\n" +
+                    $"Amount: KSH {booking.Price:N2}"
                 );
             }
 
@@ -232,7 +245,15 @@ namespace RideHub.Api.Controllers
                 await _emailService.SendEmail(
                     driver.Email,
                     "RideHub New Assignment",
-                    $"You have been assigned to trip {booking.Id} to {booking.Destination}. Vehicle: {vehicle.RegistrationNumber} ({vehicle.Model})."
+                    $"You have been assigned to trip {booking.Id}.\n\n" +
+                    $"Tourist: {tourist?.FullName ?? "Unknown"}\n" +
+                    $"Contact: {tourist?.PhoneNumber ?? "N/A"}\n\n" +
+                    $"Pickup: {booking.PickupLocation}\n" +
+                    $"Destination: {booking.Destination}\n" +
+                    $"Date: {booking.StartDate:MMMM dd, yyyy @ HH:mm}\n" +
+                    $"Passengers: {booking.NumberOfGuests}\n\n" +
+                    $"Vehicle: {vehicle.RegistrationNumber} - {vehicle.Make} {vehicle.Model}\n" +
+                    $"Price: KSH {booking.Price:N2}"
                 );
             }
 
@@ -329,6 +350,18 @@ namespace RideHub.Api.Controllers
             booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
             await _firestoreService.UpdateBookingAsync(booking);
 
+            // Update vehicle status to on-trip
+            if (!string.IsNullOrEmpty(booking.VehicleId))
+            {
+                var vehicle = await _firestoreService.GetVehicleAsync(booking.VehicleId);
+                if (vehicle != null)
+                {
+                    vehicle.Status = "on-trip";
+                    vehicle.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
+                    await _firestoreService.UpdateVehicleAsync(vehicle);
+                }
+            }
+
             return Ok(new { message = "Trip started" });
         }
 
@@ -354,13 +387,31 @@ namespace RideHub.Api.Controllers
             booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
             await _firestoreService.UpdateBookingAsync(booking);
 
+            // Update vehicle status back to available
+            if (!string.IsNullOrEmpty(booking.VehicleId))
+            {
+                var vehicle = await _firestoreService.GetVehicleAsync(booking.VehicleId);
+                if (vehicle != null)
+                {
+                    vehicle.Status = "active";
+                    vehicle.IsAvailable = true;
+                    vehicle.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
+                    await _firestoreService.UpdateVehicleAsync(vehicle);
+                }
+            }
+
             var tourist = await _firestoreService.GetUserAsync(booking.UserId);
             if (tourist != null)
             {
                 await _emailService.SendEmail(
                     tourist.Email,
                     "RideHub Trip Completed",
-                    $"Your trip to {booking.Destination} has been completed. Thank you for riding with RideHub!"
+                    $"Your trip to {booking.Destination} has been completed. Thank you for riding with RideHub!\n\n" +
+                    $"Trip Details:\n" +
+                    $"Pickup: {booking.PickupLocation}\n" +
+                    $"Destination: {booking.Destination}\n" +
+                    $"Amount Paid: KSH {booking.Price:N2}\n\n" +
+                    $"Please rate your experience and share feedback at your earliest convenience."
                 );
             }
 
@@ -434,5 +485,68 @@ namespace RideHub.Api.Controllers
             }
 
             return Ok(ApiResponse<object>.Ok(new { id }, "Booking updated successfully."));
-        }    }
+        }
+
+        // PUT: api/booking/{id}/update-status (Admin/Secretary)
+        [RoleAuthorize("Admin", "Secretary")]
+        [HttpPut("{id}/update-status")]
+        public async Task<IActionResult> UpdateBookingStatus(string id, [FromBody] UpdateBookingStatusRequest request)
+        {
+            var booking = await _firestoreService.GetBookingAsync(id);
+            if (booking == null) return NotFound(ApiResponse.Error("Booking not found."));
+
+            var profile = await GetCurrentUserProfileAsync();
+            if (profile == null) return Unauthorized(ApiResponse.Error("Unauthorized"));
+
+            string oldStatus = booking.Status;
+            booking.Status = request.Status;
+            booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
+
+            // If completing the booking, calculate commission if not already calculated
+            if (request.Status == "COMPLETED" && !booking.CommissionCalculated && booking.AssignedDriverId != null)
+            {
+                double commission = booking.Price * 0.15; // 15% commission
+
+                var driver = await _firestoreService.GetUserAsync(booking.AssignedDriverId);
+                if (driver != null)
+                {
+                    driver.CommissionBalance += commission;
+                    await _firestoreService.UpdateUserAsync(driver);
+                }
+
+                booking.CommissionCalculated = true;
+            }
+
+            // If status changed from ASSIGNED to something else, make vehicle available again
+            if (oldStatus == "ASSIGNED" && request.Status != "ASSIGNED" && !string.IsNullOrEmpty(booking.VehicleId))
+            {
+                var vehicle = await _firestoreService.GetVehicleAsync(booking.VehicleId);
+                if (vehicle != null)
+                {
+                    vehicle.IsAvailable = true;
+                    vehicle.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
+                    await _firestoreService.UpdateVehicleAsync(vehicle);
+                }
+            }
+
+            await _firestoreService.UpdateBookingAsync(booking);
+
+            // Send notification emails based on status change
+            var tourist = await _firestoreService.GetUserAsync(booking.UserId);
+            if (tourist != null)
+            {
+                string subject = $"RideHub Booking Status Updated";
+                string message = $"Your booking to {booking.Destination} status has been updated to {request.Status}.";
+
+                if (request.Status == "COMPLETED")
+                {
+                    message += " Thank you for riding with RideHub!";
+                }
+
+                await _emailService.SendEmail(tourist.Email, subject, message);
+            }
+
+            return Ok(new { message = $"Status updated to {request.Status}" });
+        }
+    }
 }

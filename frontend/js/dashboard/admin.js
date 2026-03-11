@@ -2,7 +2,8 @@
 import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
 import { attachLogoutListener } from "./logout-helper.js";
-import { initializeProfileModal } from "./profile-modal.js";
+import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
+import { showBookingDetailModal } from "./booking-detail-modal.js";
 
 let adminState = {
     bookings: [],
@@ -14,7 +15,120 @@ let adminState = {
     filters: { status: 'ALL', search: '' }
 };
 
+// update the badge on the bell icon to reflect current audit log count
+function updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    if (!badge) return;
+    const count = (adminState.auditLogs || []).length;
+    if (count > 0) {
+        badge.textContent = count;
+        badge.style.display = 'inline-block';
+    } else {
+        badge.textContent = '';
+        badge.style.display = 'none';
+    }
+}
+
+// Setup menu bar events (settings dropdown, notifications, messages)
+function setupMenuBarEvents() {
+    const settingsBtn = document.getElementById('settingsBtnTopbar');
+    const settingsDropdown = document.getElementById('settingsDropdown');
+    const profileSettingLink = document.getElementById('profileSettingLink');
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const logoutSettingBtn = document.getElementById('logoutSettingBtn');
+    const notificationBtn = document.getElementById('notificationBtnTopbar');
+    const messageBtn = document.getElementById('messageBtnTopbar');
+
+    // Settings dropdown toggle
+    if (settingsBtn && settingsDropdown) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            settingsDropdown.style.display = settingsDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!settingsBtn.contains(e.target) && !settingsDropdown.contains(e.target)) {
+                settingsDropdown.style.display = 'none';
+            }
+        });
+
+        // Dropdown hover effects
+        settingsDropdown.querySelectorAll('a, button').forEach(item => {
+            item.addEventListener('mouseenter', () => {
+                item.style.background = 'var(--surface-hover)';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+            });
+        });
+    }
+
+    // Profile link
+    if (profileSettingLink) {
+        profileSettingLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            settingsDropdown.style.display = 'none';
+            openProfileModal();
+        });
+    }
+
+    // Theme toggle
+    if (themeToggleBtn) {
+        const currentTheme = localStorage.getItem('ridehub_theme') || 'light';
+        const updateThemeButton = () => {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            themeToggleBtn.innerHTML = isDark ? 
+                '☀️ <span>Light Mode</span>' : 
+                '🌙 <span>Dark Mode</span>';
+        };
+        
+        updateThemeButton();
+        
+        themeToggleBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const newTheme = isDark ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('ridehub_theme', newTheme);
+            updateThemeButton();
+            showToast(`Switched to ${newTheme} mode`, '#10b981');
+            settingsDropdown.style.display = 'none';
+        });
+    }
+
+    // Logout button in settings
+    if (logoutSettingBtn) {
+        logoutSettingBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const { signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
+            const { auth } = await import('../firebase.js');
+            await signOut(auth);
+            localStorage.removeItem('ridehub_token');
+            localStorage.removeItem('ridehub_role');
+            window.location.href = 'index.html';
+        });
+    }
+
+    // Notifications button - show audit logs
+    if (notificationBtn) {
+        notificationBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            showAuditLogs();
+        });
+    }
+
+    // Message button - show audit logs (same as notifications for admin)
+    if (messageBtn) {
+        messageBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            showAuditLogs();
+        });
+    }
+}
+
 export async function renderAdminUI(sidebar, content) {
+    console.log('Rendering admin UI...');
     sidebar.innerHTML = `
         ${createNavItem('Dashboard Overview', icons.dashboard, 'overview', adminState.activeTab === 'overview')}
         ${createNavItem('Business Analytics', '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>', 'analytics', adminState.activeTab === 'analytics')}
@@ -39,6 +153,10 @@ export async function renderAdminUI(sidebar, content) {
     // Initialize profile modal
     initializeProfileModal();
 
+    // Setup menu bar events (settings dropdown, notifications, messages)
+    setupMenuBarEvents();
+
+    console.log('Admin state bookings length:', adminState.bookings.length);
     if (adminState.bookings.length === 0) {
         content.innerHTML = `<div style="padding:2rem;text-align:center;">Loading Admin Telemetry...</div>`;
         await loadAdminData(content);
@@ -52,19 +170,41 @@ export async function renderAdminUI(sidebar, content) {
 
 export async function loadAdminData(content) {
     try {
+        console.log('Loading admin data...');
         const [bRes, uRes, vRes] = await Promise.all([
             api.getBookings(),
             api.getAllUsers(),
             api.getVehicles()
         ]);
-        adminState.bookings = await bRes.json();
-        adminState.users = await uRes.json();
-        adminState.vehicles = await vRes.json();
+
+        console.log('API responses received:', { bRes: bRes.ok, uRes: uRes.ok, vRes: vRes.ok });
+
+        if (!bRes.ok) throw new Error(`Bookings API failed: ${bRes.status}`);
+        if (!uRes.ok) throw new Error(`Users API failed: ${uRes.status}`);
+        if (!vRes.ok) throw new Error(`Vehicles API failed: ${vRes.status}`);
+
+        // API responses are wrapped in ApiResponse<T> with data in .data property
+        const bData = await bRes.json();
+        const uData = await uRes.json();
+        const vData = await vRes.json();
+
+        console.log('Parsed data:', { bookings: bData, users: uData, vehicles: vData });
+
+        adminState.bookings = bData.data || bData || [];
+        adminState.users = uData.data || uData || [];
+        adminState.vehicles = vData.data || vData || [];
+
+        console.log('Admin state updated:', adminState);
 
         // Fetch feedback separately - it's optional
         try {
             const fRes = await api.getFeedback();
-            adminState.feedback = fRes && fRes.ok ? await fRes.json() : [];
+            if (fRes && fRes.ok) {
+                const fData = await fRes.json();
+                adminState.feedback = fData.data || fData || [];
+            } else {
+                adminState.feedback = [];
+            }
         } catch (err) {
             console.warn('Feedback endpoint not available yet:', err.message);
             adminState.feedback = [];
@@ -73,9 +213,12 @@ export async function loadAdminData(content) {
         if (content) {
             renderAdminView(content);
         }
+        // after loading fresh data, regenerate logs and update badge
+        generateAuditLogs();
+        updateNotificationBadge();
     } catch (e) {
-        console.error(e);
-        if (content) content.innerHTML = `<div style="padding:2rem;color:red;">Error loading admin data.</div>`;
+        console.error('Error loading admin data:', e);
+        if (content) content.innerHTML = `<div style="padding:2rem;color:red;">Error loading admin data: ${e.message}</div>`;
     }
 }
 
@@ -83,15 +226,31 @@ export async function loadAdminData(content) {
 function generateAuditLogs() {
     const logs = [];
 
+    // Helper function to create valid date
+    const createValidDate = (dateStr) => {
+        if (!dateStr) return new Date();
+        const date = new Date(dateStr);
+        return isNaN(date.getTime()) ? new Date() : date;
+    };
+
     // Log recent bookings
     adminState.bookings.slice(0, 20).forEach(b => {
+        const destination = b.destination || b.dropOffLocation || 'Unknown Destination';
+        // try to surface registration number if available via vehicle lookup
+        let vehicleInfo = b.vehicleType || 'Vehicle';
+        if (b.vehicleId) {
+            const veh = adminState.vehicles.find(v => v.id === b.vehicleId);
+            if (veh) {
+                vehicleInfo = `${veh.vehicleType || ''} ${veh.registrationNumber || ''}`.trim();
+            }
+        }
         logs.push({
             id: b.id,
             type: 'booking',
             icon: '🚗',
             title: 'New Booking Created',
-            description: `${b.vehicleType} booked to ${b.destination || 'Unknown'}`,
-            timestamp: new Date(b.createdAt),
+            description: `${vehicleInfo} booked to ${destination}`,
+            timestamp: createValidDate(b.createdAt),
             severity: 'info'
         });
     });
@@ -99,23 +258,39 @@ function generateAuditLogs() {
     // Log booking status changes
     adminState.bookings.slice(0, 10).forEach(b => {
         if (b.status === 'COMPLETED') {
+            const destination = b.destination || b.dropOffLocation || 'Unknown Destination';
+            // reuse vehicleInfo logic
+            let vehicleInfo = b.vehicleType || 'Vehicle';
+            if (b.vehicleId) {
+                const veh = adminState.vehicles.find(v => v.id === b.vehicleId);
+                if (veh) {
+                    vehicleInfo = `${veh.vehicleType || ''} ${veh.registrationNumber || ''}`.trim();
+                }
+            }
             logs.push({
                 id: `${b.id}-complete`,
                 type: 'completion',
                 icon: '✅',
                 title: 'Trip Completed',
-                description: `${b.vehicleType} trip to ${b.destination || 'Unknown'} completed`,
-                timestamp: new Date(b.completedAt || b.createdAt),
+                description: `${vehicleInfo} trip to ${destination} completed`,
+                timestamp: createValidDate(b.completedAt || b.updatedAt || b.createdAt),
                 severity: 'success'
             });
         } else if (b.status === 'CANCELLED') {
+            let vehicleInfo = b.vehicleType || 'Vehicle';
+            if (b.vehicleId) {
+                const veh = adminState.vehicles.find(v => v.id === b.vehicleId);
+                if (veh) {
+                    vehicleInfo = `${veh.vehicleType || ''} ${veh.registrationNumber || ''}`.trim();
+                }
+            }
             logs.push({
                 id: `${b.id}-cancel`,
                 type: 'cancellation',
                 icon: '❌',
                 title: 'Booking Cancelled',
-                description: `${b.vehicleType} booking cancelled`,
-                timestamp: new Date(b.createdAt),
+                description: `${vehicleInfo} booking cancelled`,
+                timestamp: createValidDate(b.updatedAt || b.createdAt),
                 severity: 'warning'
             });
         }
@@ -123,7 +298,7 @@ function generateAuditLogs() {
 
     // Log recent user registrations
     adminState.users
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .sort((a, b) => createValidDate(b.createdAt) - createValidDate(a.createdAt))
         .slice(0, 15)
         .forEach(u => {
             logs.push({
@@ -131,8 +306,8 @@ function generateAuditLogs() {
                 type: 'registration',
                 icon: '👤',
                 title: 'New User Registered',
-                description: `${u.firstName} ${u.lastName} registered as ${u.role}`,
-                timestamp: new Date(u.createdAt),
+                description: `${u.firstName || u.fullName || 'User'} ${u.lastName || ''} registered as ${u.role || 'Tourist'}`,
+                timestamp: createValidDate(u.createdAt),
                 severity: 'info'
             });
         });
@@ -146,8 +321,8 @@ function generateAuditLogs() {
                 type: 'suspension',
                 icon: '⛔',
                 title: 'User Suspended',
-                description: `${u.firstName} ${u.lastName} (${u.role}) has been suspended`,
-                timestamp: new Date(u.updatedAt || u.createdAt),
+                description: `${u.firstName || u.fullName || 'User'} ${u.lastName || ''} (${u.role || 'Tourist'}) has been suspended`,
+                timestamp: createValidDate(u.updatedAt || u.createdAt),
                 severity: 'critical'
             });
         });
@@ -155,13 +330,15 @@ function generateAuditLogs() {
     // Log feedback received
     adminState.feedback.slice(0, 10).forEach(f => {
         const ratingEmoji = f.rating >= 4 ? '⭐' : f.rating >= 3 ? '⚠️' : '❌';
+        const booking = adminState.bookings.find(b => b.id === f.bookingId);
+        const destination = booking ? (booking.destination || booking.dropOffLocation || 'Unknown Destination') : 'Trip';
         logs.push({
             id: `feedback-${f.id}`,
             type: 'feedback',
             icon: ratingEmoji,
             title: `Customer Review (${f.rating}⭐)`,
-            description: f.comment || 'Review submitted',
-            timestamp: new Date(f.createdAt),
+            description: `${f.comment || 'Review submitted'} - ${destination}`,
+            timestamp: createValidDate(f.createdAt),
             severity: f.rating >= 4 ? 'success' : f.rating >= 3 ? 'warning' : 'critical'
         });
     });
@@ -169,6 +346,8 @@ function generateAuditLogs() {
     // Sort by timestamp (newest first)
     logs.sort((a, b) => b.timestamp - a.timestamp);
     adminState.auditLogs = logs;
+    // refresh the badge count whenever logs are recalculated
+    updateNotificationBadge();
     return logs;
 }
 
@@ -190,7 +369,8 @@ function showAuditLogs() {
     });
 
     const logItems = logs.slice(0, 50).map(log => `
-        <div style="display: flex; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--border-color); hover:background: var(--surface-color); transition: background 0.2s;">
+        <div style="display: flex; gap: 1rem; padding: 1rem; border-bottom: 1px solid var(--border-color); hover:background: var(--surface-color); transition: background 0.2s; cursor: pointer;" 
+             data-log-type="${log.type}" data-log-id="${log.id}" class="audit-log-item">
             <div style="font-size: 1.5rem; min-width: 2rem; text-align: center;">${log.icon}</div>
             <div style="flex: 1;">
                 <div style="display: flex; justify-content: space-between; align-items: start; gap: 1rem;">
@@ -198,7 +378,7 @@ function showAuditLogs() {
                         <h4 style="margin: 0 0 0.25rem; color: var(--text-primary); font-weight: 600;">${log.title}</h4>
                         <p style="margin: 0; color: var(--text-secondary); font-size: 0.875rem;">${log.description}</p>
                     </div>
-                    <span style="color: var(--text-secondary); font-size: 0.75rem; white-space: nowrap;">${log.timestamp.toLocaleTimeString()}</span>
+                    <span style="color: var(--text-secondary); font-size: 0.75rem; white-space: nowrap;">${log.timestamp.toLocaleString()}</span>
                 </div>
             </div>
         </div>
@@ -224,9 +404,78 @@ function showAuditLogs() {
     document.body.appendChild(modal);
     setTimeout(() => modal.style.opacity = '1', 10);
 
-    document.getElementById('closeAuditModal').addEventListener('click', () => {
+    const closeModal = () => {
         modal.style.opacity = '0';
         setTimeout(() => modal.remove(), 300);
+    };
+
+    const closeBtn = modal.querySelector('#closeAuditModal');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeModal();
+        });
+    }
+    
+    // Also allow clicking on the overlay background to close
+    const overlay = modal;
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            closeModal();
+        }
+    });
+
+    // Add click handlers for audit log items
+    modal.querySelectorAll('.audit-log-item').forEach(item => {
+        item.addEventListener('click', (e) => {
+            const logType = item.getAttribute('data-log-type');
+            const logId = item.getAttribute('data-log-id');
+            
+            modal.style.opacity = '0';
+            setTimeout(() => modal.remove(), 300);
+            
+            // Navigate to relevant section based on log type
+            const content = document.querySelector('.main-content');
+            switch (logType) {
+                case 'booking':
+                case 'completion':
+                case 'cancellation':
+                    adminState.activeTab = 'overview';
+                    renderAdminView(content);
+                    // Scroll to the specific booking if possible
+                    setTimeout(() => {
+                        const bookingRow = document.querySelector(`[data-id="${logId.split('-')[0]}"]`);
+                        if (bookingRow) {
+                            bookingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            bookingRow.style.backgroundColor = '#fff3cd';
+                            setTimeout(() => bookingRow.style.backgroundColor = '', 2000);
+                        }
+                    }, 500);
+                    break;
+                case 'registration':
+                case 'suspension':
+                    adminState.activeTab = 'users';
+                    renderAdminView(content);
+                    // Scroll to the specific user if possible
+                    setTimeout(() => {
+                        const userId = logId.replace('user-', '').replace('suspend-', '');
+                        const userRow = document.querySelector(`[data-id="${userId}"]`);
+                        if (userRow) {
+                            userRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            userRow.style.backgroundColor = '#fff3cd';
+                            setTimeout(() => userRow.style.backgroundColor = '', 2000);
+                        }
+                    }, 500);
+                    break;
+                case 'feedback':
+                    adminState.activeTab = 'feedback';
+                    renderAdminView(content);
+                    break;
+                default:
+                    // Stay on current tab
+                    break;
+            }
+        });
     });
 
     // Update notification badge
@@ -246,6 +495,8 @@ export function initializeAdminNotifications() {
             showAuditLogs();
         });
     }
+    // ensure badge starts in sync when notifications component is initialized
+    updateNotificationBadge();
 }
 
 function renderAdminView(content) {
@@ -285,16 +536,20 @@ function renderOverviewTab(content) {
             let actions = '';
             if (b.status === 'PENDING') {
                 actions = `
-                    <button class="btn btn-primary approve-btn" data-id="${b.id}" style="margin-right:0.25rem; font-size:0.75rem;">Approve</button>
-                    <button class="btn btn-danger reject-btn" data-id="${b.id}" style="margin-right:0.25rem; font-size:0.75rem;">Reject</button>
+                    <button class="btn btn-primary approve-btn" data-id="${b.id}" style="margin-right:0.25rem; font-size:0.75rem; min-width:4rem; display:inline-block; text-align:center;">Approve</button>
+                    <button class="btn btn-danger reject-btn" data-id="${b.id}" style="margin-right:0.25rem; font-size:0.75rem; min-width:4rem; display:inline-block; text-align:center;">Reject</button>
                     <button class="btn btn-secondary cancel-btn" data-id="${b.id}" style="font-size:0.75rem;">Cancel</button>
                 `;
-            } else if (b.status === 'APPROVED' || b.status === 'ASSIGNED') {
-                actions = `<button class="btn btn-secondary cancel-btn" data-id="${b.id}" style="font-size:0.75rem;">Cancel</button>`;
+            } else if (b.status === 'APPROVED') {
+                actions = `<button class="btn btn-warning update-status-btn" data-id="${b.id}" style="font-size:0.75rem;">Update Status</button>`;
+            } else if (b.status === 'ASSIGNED' || b.status === 'IN_PROGRESS') {
+                actions = `<button class="btn btn-warning update-status-btn" data-id="${b.id}" style="font-size:0.75rem;">Update Status</button>`;
+            } else if (b.status === 'COMPLETED' || b.status === 'CANCELLED') {
+                actions = `<span style="font-size:0.75rem; color:var(--text-secondary);">No actions available</span>`;
             }
 
             return `
-            <tr>
+            <tr class="booking-row" data-booking-id="${b.id}" style="cursor: pointer; transition: background-color 0.2s ease;" data-booking='${JSON.stringify(b)}'>
                 <td>${new Date(b.createdAt).toLocaleDateString()}</td>
                 <td>${b.destination || '-'}</td>
                 <td>${b.userId}</td>
@@ -380,6 +635,74 @@ function renderOverviewTab(content) {
                 </table>
             </div>
         </div>
+
+        <!-- Commission & Driver Performance Section -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin-top: 3rem;">
+            <!-- Commission Summary -->
+            <div class="table-container">
+                <div class="table-header">
+                    <h3 style="font-size: 1rem; font-weight: 600;">Driver Commission Summary</h3>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Driver</th>
+                            <th>Commission</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${adminState.users
+                            .filter(u => u.role === 'Driver' && (u.commissionBalance || 0) > 0)
+                            .sort((a, b) => (b.commissionBalance || 0) - (a.commissionBalance || 0))
+                            .slice(0, 10)
+                            .map(d => `
+                                <tr>
+                                    <td>${d.fullName}</td>
+                                    <td style="font-weight: 600; color: #10b981;">KSH ${(d.commissionBalance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                </tr>
+                            `).join('')}
+                        ${adminState.users.filter(u => u.role === 'Driver' && (u.commissionBalance || 0) > 0).length === 0 ? '<tr><td colspan="2" style="text-align:center; color: var(--text-secondary);">No commissions yet</td></tr>' : ''}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Driver Performance -->
+            <div class="table-container">
+                <div class="table-header">
+                    <h3 style="font-size: 1rem; font-weight: 600;">Driver Performance</h3>
+                </div>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Driver</th>
+                            <th>Trips</th>
+                            <th>Rating</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${adminState.users
+                            .filter(u => u.role === 'Driver')
+                            .map(d => {
+                                const driverTrips = adminState.bookings.filter(b => b.assignedDriverId === d.uid);
+                                const completedTrips = driverTrips.filter(b => b.status === 'COMPLETED').length;
+                                const driverFeedback = adminState.feedback.filter(f => f.driverId === d.uid);
+                                const avgRating = driverFeedback.length > 0
+                                    ? (driverFeedback.reduce((sum, f) => sum + (f.rating || 0), 0) / driverFeedback.length).toFixed(1)
+                                    : 'N/A';
+                                
+                                return `
+                                    <tr>
+                                        <td>${d.fullName}</td>
+                                        <td>${completedTrips}</td>
+                                        <td>${typeof avgRating === 'number' ? avgRating + ' ⭐' : avgRating}</td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        ${adminState.users.filter(u => u.role === 'Driver').length === 0 ? '<tr><td colspan="3" style="text-align:center; color: var(--text-secondary);">No drivers</td></tr>' : ''}
+                    </tbody>
+                </table>
+            </div>
+        </div>
     `;
 
     document.getElementById('overviewStatusFilter').addEventListener('change', (e) => {
@@ -395,6 +718,8 @@ function renderOverviewTab(content) {
                 await api.approveBooking(id);
                 showToast('Booking approved');
                 await loadAdminData(content);
+                // Show driver assignment modal after approval
+                setTimeout(() => showDriverAssignmentModal(id), 500);
             } catch (err) {
                 console.error(err);
                 showToast('Approve failed', '#ef4444');
@@ -427,6 +752,36 @@ function renderOverviewTab(content) {
             }
         });
     });
+    content.querySelectorAll('.update-status-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const id = e.currentTarget.getAttribute('data-id');
+            showUpdateStatusModal(id);
+        });
+    });
+
+    // Add click handlers for booking rows to show detail modal
+    content.querySelectorAll('.booking-row').forEach(row => {
+        row.addEventListener('mouseenter', () => {
+            row.style.backgroundColor = 'var(--surface-hover)';
+        });
+        row.addEventListener('mouseleave', () => {
+            row.style.backgroundColor = 'transparent';
+        });
+        row.addEventListener('click', (e) => {
+            // Don't open modal if clicking on a button
+            if (e.target.closest('button')) return;
+            
+            const bookingData = row.getAttribute('data-booking');
+            if (bookingData) {
+                try {
+                    const booking = JSON.parse(bookingData);
+                    showBookingDetailModal(booking, adminState.users);
+                } catch (err) {
+                    console.error('Error parsing booking data:', err);
+                }
+            }
+        });
+    });
 }
 
 
@@ -444,12 +799,13 @@ function renderUsersTab(content) {
             <td>${u.role === 'Tourist' ? '-' : `KSH ${(u.commissionBalance || 0).toLocaleString()}`}</td>
             <td>
                 <div style="display: flex; gap: 0.5rem;">
-                    <button class="btn btn-secondary promote-btn" data-id="${u.uid}" data-role="Driver" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Make Driver</button>
-                    <button class="btn btn-secondary promote-btn" data-id="${u.uid}" data-role="Secretary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Make Secretary</button>
-                    ${u.status === 'Active' ?
-            `<button class="btn btn-primary suspend-btn" data-id="${u.uid}" style="background-color: #ef4444; padding: 0.25rem 0.5rem; font-size: 0.75rem;">Suspend</button>` :
-            ''
-        }
+                    ${u.status === 'Active' ? `
+                        <button class="btn btn-secondary promote-btn" data-id="${u.uid}" data-role="Driver" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #8b5cf6; color: white;">Make Driver</button>
+                        <button class="btn btn-secondary promote-btn" data-id="${u.uid}" data-role="Secretary" style="padding: 0.25rem 0.5rem; font-size: 0.75rem; background: #06b6d4; color: white;">Make Secretary</button>
+                        <button class="btn btn-primary suspend-btn" data-id="${u.uid}" style="background-color: #ef4444; padding: 0.25rem 0.5rem; font-size: 0.75rem;">Suspend</button>
+                    ` : `
+                        <button class="btn btn-success reinstate-btn" data-id="${u.uid}" style="background-color: #22c55e; padding: 0.25rem 0.5rem; font-size: 0.75rem;">Reinstate</button>
+                    `}
                 </div>
             </td>
         </tr>
@@ -499,6 +855,18 @@ function renderUsersTab(content) {
             btnEl.textContent = 'Wait...';
             const uid = btnEl.getAttribute('data-id');
             await suspendUser(uid, content);
+            btnEl.disabled = false;
+        });
+    });
+
+    content.querySelectorAll('.reinstate-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const btnEl = e.currentTarget;
+            btnEl.disabled = true;
+            btnEl.textContent = 'Wait...';
+            const uid = btnEl.getAttribute('data-id');
+            await reinstateUser(uid, content);
             btnEl.disabled = false;
         });
     });
@@ -587,6 +955,46 @@ async function suspendUser(uid, content) {
     }
 }
 
+async function reinstateUser(uid, content) {
+    try {
+        const response = await api.reinstateUser(uid);
+        
+        // Handle response - API might return empty 204 or JSON response
+        let result = {};
+        const contentType = response.headers.get('content-type');
+        
+        if (response.ok) {
+            // Only try to parse JSON if response has content
+            if (contentType && contentType.includes('application/json')) {
+                try {
+                    result = await response.json();
+                } catch (e) {
+                    // Empty body or invalid JSON - that's okay for 204/200 success
+                    result = { message: 'User reinstated successfully' };
+                }
+            } else {
+                result = { message: 'User reinstated successfully' };
+            }
+            
+            showToast(result.message || 'User reinstated successfully', '#10b981');
+            await loadAdminData(content);
+        } else {
+            // Error response
+            try {
+                result = await response.json();
+            } catch (e) {
+                result = { message: 'Reinstatement failed' };
+            }
+            
+            console.error("Reinstatement failed", result);
+            showToast(result.message || "Reinstatement failed", "#ef4444");
+        }
+    } catch (e) {
+        console.error("Network error during reinstatement", e);
+        showToast("Network error: " + e.message, "#ef4444");
+    }
+}
+
 function renderFleetTab(content) {
     // form to add new vehicle
     const addFormHtml = `
@@ -638,6 +1046,7 @@ function renderFleetTab(content) {
                 ${v.isAvailable ? '<span class="badge badge-approved" style="background:#10b981;color:white;">AVAILABLE</span>' : '<span class="badge badge-pending">DISPATCHED</span>'}
             </td>
             <td>
+                <button class="btn btn-secondary edit-veh" data-id="${v.id}" style="padding:0.25rem; font-size:0.75rem; margin-right:0.25rem;">Edit</button>
                 ${v.status !== 'active' ?
             `<button class="btn btn-primary activate-btn" data-id="${v.id}" style="padding: 0.25rem; font-size: 0.75rem;">Activate</button>` :
             `<button class="btn btn-secondary deactivate-btn" data-id="${v.id}" style="padding: 0.25rem; font-size: 0.75rem;">Deactivate</button>`
@@ -652,7 +1061,75 @@ function renderFleetTab(content) {
             <h2>Live Fleet Controls</h2>
         </div>
         ${addFormHtml}
+        
+        <!-- Driver-Vehicle Assignment Section -->
+        <div class="form-card" style="margin-bottom:2rem; max-width:600px;">
+            <h3 style="margin-bottom:1rem;">Assign Driver to Vehicle</h3>
+            <form id="fleetAssignmentForm" style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                <div>
+                    <label>Select Driver</label>
+                    <select id="assignDriver" class="form-control" required>
+                        <option value="">Choose driver...</option>
+                        ${adminState.users.filter(u => u.role === 'Driver' && u.status === 'Active').map(d => 
+                            `<option value="${d.uid}">${d.fullName} (${d.email})</option>`
+                        ).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label>Select Vehicle</label>
+                    <select id="assignVehicle" class="form-control" required>
+                        <option value="">Choose vehicle...</option>
+                        ${adminState.vehicles.filter(v => v.status === 'active').map(v => 
+                            `<option value="${v.id}">${v.registrationNumber} - ${v.make} ${v.model}</option>`
+                        ).join('')}
+                    </select>
+                </div>
+                <div style="grid-column: span 2; text-align:right;">
+                    <button type="submit" class="btn btn-primary" style="width:150px;">Assign</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- Current Assignments -->
+        <div class="table-container" style="margin-bottom:2rem;">
+            <div class="table-header">
+                <h3 style="font-size: 1rem; font-weight: 600;">Current Driver-Vehicle Assignments</h3>
+            </div>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Driver</th>
+                        <th>Vehicle</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${adminState.vehicles.filter(v => v.assignedDriverId).map(v => {
+                        const driver = adminState.users.find(u => u.uid === v.assignedDriverId);
+                        return `
+                            <tr>
+                                <td>${driver ? driver.fullName : 'Unknown Driver'}</td>
+                                <td>${v.registrationNumber} - ${v.make} ${v.model}</td>
+                                <td>
+                                    ${v.isAvailable ? 
+                                        '<span class="badge badge-approved" style="background:#10b981;color:white;">AVAILABLE</span>' : 
+                                        '<span class="badge badge-pending">IN USE</span>'}
+                                </td>
+                                <td>
+                                    <button class="btn btn-danger unassign-btn" data-vehicle-id="${v.id}" style="padding: 0.25rem; font-size: 0.75rem;">Unassign</button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+
         <div class="table-container">
+            <div class="table-header">
+                <h3 style="font-size: 1rem; font-weight: 600;">Fleet Inventory</h3>
+            </div>
             <table class="data-table">
                 <thead>
                     <tr>
@@ -723,6 +1200,55 @@ function renderFleetTab(content) {
             } catch (err) {
                 console.error(err);
                 showToast('Delete failed', '#ef4444');
+            }
+        });
+    });
+
+    // Edit vehicle entries
+    content.querySelectorAll('.edit-veh').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            const id = e.target.getAttribute('data-id');
+            showEditVehicleModal(id);
+        });
+    });
+
+    // Driver-Vehicle Assignment
+    const fleetAssignmentForm = document.getElementById('fleetAssignmentForm');
+    if (fleetAssignmentForm) {
+        fleetAssignmentForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const driverId = document.getElementById('assignDriver').value;
+            const vehicleId = document.getElementById('assignVehicle').value;
+
+            if (!driverId || !vehicleId) {
+                showToast('Please select both driver and vehicle', '#ef4444');
+                return;
+            }
+
+            try {
+                await api.assignDriverToVehicle(driverId, vehicleId);
+                showToast('Driver assigned to vehicle successfully');
+                await loadAdminData(content);
+            } catch (err) {
+                console.error(err);
+                showToast('Assignment failed', '#ef4444');
+            }
+        });
+    }
+
+    // Unassign buttons
+    content.querySelectorAll('.unassign-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            const vehicleId = e.target.getAttribute('data-vehicle-id');
+            if (!confirm('Unassign driver from this vehicle?')) return;
+
+            try {
+                await api.unassignDriverFromVehicle(vehicleId);
+                showToast('Driver unassigned successfully');
+                await loadAdminData(content);
+            } catch (err) {
+                console.error(err);
+                showToast('Unassignment failed', '#ef4444');
             }
         });
     });
@@ -1028,26 +1554,45 @@ function renderFeedbackTab(content) {
     try {
         const feedback = adminState.feedback || [];
         
-        // Calculate feedback statistics
-        const totalFeedback = feedback.length;
-        const averageRating = totalFeedback > 0 ? 
-            (feedback.reduce((sum, f) => sum + (f.rating || 0), 0) / totalFeedback).toFixed(1) : 0;
+        // Separate feedback types
+        const customerFeedback = feedback.filter(f => f.type === 'SERVICE' || f.type === 'GENERAL');
+        const driverFeedback = feedback.filter(f => f.targetUserId && f.type === 'SERVICE');
         
-        const ratingDistribution = [0, 0, 0, 0, 0]; // 1-5 stars
-        feedback.forEach(f => {
+        // Calculate statistics for customer feedback
+        const totalCustomerFeedback = customerFeedback.length;
+        const avgCustomerRating = totalCustomerFeedback > 0 ? 
+            (customerFeedback.reduce((sum, f) => sum + (f.rating || 0), 0) / totalCustomerFeedback).toFixed(1) : 0;
+        
+        // Calculate statistics for driver performance
+        const totalDriverFeedback = driverFeedback.length;
+        const avgDriverRating = totalDriverFeedback > 0 ? 
+            (driverFeedback.reduce((sum, f) => sum + (f.rating || 0), 0) / totalDriverFeedback).toFixed(1) : 0;
+        
+        // Rating distribution for customer feedback
+        const customerRatingDistribution = [0, 0, 0, 0, 0];
+        customerFeedback.forEach(f => {
             if (f.rating >= 1 && f.rating <= 5) {
-                ratingDistribution[f.rating - 1]++;
+                customerRatingDistribution[f.rating - 1]++;
+            }
+        });
+        
+        // Rating distribution for driver feedback
+        const driverRatingDistribution = [0, 0, 0, 0, 0];
+        driverFeedback.forEach(f => {
+            if (f.rating >= 1 && f.rating <= 5) {
+                driverRatingDistribution[f.rating - 1]++;
             }
         });
 
-        let feedbackHtml = '';
-        if (totalFeedback === 0) {
-            feedbackHtml = `<div style="padding: 3rem; text-align: center; color: var(--text-secondary); background: #f9f9f9; border-radius: 8px;">No customer feedback yet.</div>`;
-        } else {
-            feedbackHtml = feedback.map(f => {
+        const renderFeedbackList = (feedbackList, title, emptyMessage) => {
+            if (feedbackList.length === 0) {
+                return `<div style="padding: 3rem; text-align: center; color: var(--text-secondary); background: #f9f9f9; border-radius: 8px;">${emptyMessage}</div>`;
+            }
+            
+            return feedbackList.map(f => {
                 const booking = adminState.bookings.find(b => b.id === f.bookingId);
                 const user = adminState.users.find(u => u.uid === (booking?.userId));
-                const driver = adminState.users.find(u => u.uid === (booking?.assignedDriverId));
+                const driver = adminState.users.find(u => u.uid === (booking?.assignedDriverId || f.targetUserId));
                 
                 const stars = '★'.repeat(f.rating) + '☆'.repeat(5 - f.rating);
                 
@@ -1057,7 +1602,7 @@ function renderFeedbackTab(content) {
                             <div>
                                 <div style="font-size: 1.25rem; color: #fbbf24; margin-bottom: 0.5rem;">${stars}</div>
                                 <h3 style="margin: 0; color: var(--text-primary); font-size: 1rem; font-weight: 600;">
-                                    ${booking ? `${booking.pickupLocation} → ${booking.destination}` : 'Trip'}
+                                    ${booking ? `${booking.pickupLocation || 'N/A'} → ${booking.destination || 'N/A'}` : 'Trip'}
                                 </h3>
                                 <p style="margin: 0.5rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">
                                     👤 ${user?.fullName || 'Customer'} | 🚗 ${driver?.fullName || 'Driver'} | 📅 ${booking ? new Date(booking.startDate).toLocaleDateString() : 'N/A'}
@@ -1076,97 +1621,419 @@ function renderFeedbackTab(content) {
                     </div>
                 `;
             }).join('');
-        }
+        };
 
         content.innerHTML = `
             <div class="page-header">
-                <h2>Customer Feedback & Ratings</h2>
-                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">Monitor customer satisfaction and service quality</p>
+                <h2>Customer Feedback & Driver Performance</h2>
+                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;">Monitor customer satisfaction and driver performance</p>
             </div>
 
-            <!-- Feedback Statistics -->
-            <div class="metrics-grid" style="margin-bottom: 2rem;">
-                <div class="metric-card">
-                    <div class="metric-icon">${icons.book}</div>
-                    <div class="metric-info">
-                        <h3>Total Reviews</h3>
-                        <div class="value">${totalFeedback}</div>
+            <!-- Customer Feedback Section -->
+            <div style="margin-bottom: 3rem;">
+                <h3 style="color: var(--text-primary); font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem;">Customer Feedback</h3>
+                
+                <!-- Customer Feedback Statistics -->
+                <div class="metrics-grid" style="margin-bottom: 2rem;">
+                    <div class="metric-card">
+                        <div class="metric-icon">${icons.book}</div>
+                        <div class="metric-info">
+                            <h3>Total Reviews</h3>
+                            <div class="value">${totalCustomerFeedback}</div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-icon">⭐</div>
+                        <div class="metric-info">
+                            <h3>Average Rating</h3>
+                            <div class="value">${avgCustomerRating}</div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-icon">${icons.users}</div>
+                        <div class="metric-info">
+                            <h3>5-Star Reviews</h3>
+                            <div class="value">${customerRatingDistribution[4]}</div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-icon">📊</div>
+                        <div class="metric-info">
+                            <h3>Response Rate</h3>
+                            <div class="value">${totalCustomerFeedback > 0 ? Math.round((customerFeedback.filter(f => f.comment).length / totalCustomerFeedback) * 100) : 0}%</div>
+                        </div>
                     </div>
                 </div>
-                <div class="metric-card">
-                    <div class="metric-icon">⭐</div>
-                    <div class="metric-info">
-                        <h3>Average Rating</h3>
-                        <div class="value">${averageRating}</div>
+
+                <!-- Customer Feedback List -->
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3 style="font-size: 1rem; font-weight: 600;">Recent Customer Reviews</h3>
                     </div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-icon">${icons.users}</div>
-                    <div class="metric-info">
-                        <h3>5-Star Reviews</h3>
-                        <div class="value">${ratingDistribution[4]}</div>
-                    </div>
-                </div>
-                <div class="metric-card">
-                    <div class="metric-icon">📊</div>
-                    <div class="metric-info">
-                        <h3>Response Rate</h3>
-                        <div class="value">${totalFeedback > 0 ? Math.round((feedback.filter(f => f.comment).length / totalFeedback) * 100) : 0}%</div>
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        ${renderFeedbackList(customerFeedback.slice(0, 10), 'Customer Feedback', 'No customer feedback yet.')}
                     </div>
                 </div>
             </div>
 
-            <!-- Rating Distribution Chart -->
-            <div style="background: white; border-radius: 12px; padding: 1.5rem; margin-bottom: 2rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                <h3 style="margin-bottom: 1rem; color: var(--text-primary);">Rating Distribution</h3>
-                <canvas id="ratingChart" style="max-height: 200px;"></canvas>
-            </div>
-
-            <!-- Feedback List -->
-            <div class="table-container">
-                <div class="table-header">
-                    <h3 style="font-size: 1rem; font-weight: 600;">Recent Customer Feedback</h3>
+            <!-- Driver Performance Section -->
+            <div>
+                <h3 style="color: var(--text-primary); font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem;">Driver Performance</h3>
+                
+                <!-- Driver Performance Statistics -->
+                <div class="metrics-grid" style="margin-bottom: 2rem;">
+                    <div class="metric-card">
+                        <div class="metric-icon">${icons.book}</div>
+                        <div class="metric-info">
+                            <h3>Total Reviews</h3>
+                            <div class="value">${totalDriverFeedback}</div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-icon">⭐</div>
+                        <div class="metric-info">
+                            <h3>Average Rating</h3>
+                            <div class="value">${avgDriverRating}</div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-icon">${icons.users}</div>
+                        <div class="metric-info">
+                            <h3>5-Star Reviews</h3>
+                            <div class="value">${driverRatingDistribution[4]}</div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-icon">📊</div>
+                        <div class="metric-info">
+                            <h3>Response Rate</h3>
+                            <div class="value">${totalDriverFeedback > 0 ? Math.round((driverFeedback.filter(f => f.comment).length / totalDriverFeedback) * 100) : 0}%</div>
+                        </div>
+                    </div>
                 </div>
-                <div style="max-height: 600px; overflow-y: auto;">
-                    ${feedbackHtml}
+
+                <!-- Driver Performance List -->
+                <div class="table-container">
+                    <div class="table-header">
+                        <h3 style="font-size: 1rem; font-weight: 600;">Recent Driver Reviews</h3>
+                    </div>
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        ${renderFeedbackList(driverFeedback.slice(0, 10), 'Driver Performance', 'No driver feedback yet.')}
+                    </div>
                 </div>
             </div>
         `;
 
-        // Render rating distribution chart
-        if (totalFeedback > 0) {
-            setTimeout(() => {
-                try {
-                    new Chart(document.getElementById("ratingChart"), {
-                        type: "bar",
-                        data: {
-                            labels: ["1 Star", "2 Stars", "3 Stars", "4 Stars", "5 Stars"],
-                            datasets: [{
-                                label: "Number of Reviews",
-                                data: ratingDistribution,
-                                backgroundColor: [
-                                    '#ef4444', '#f97316', '#f59e0b', '#eab308', '#22c55e'
-                                ],
-                                borderRadius: 4
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            plugins: { legend: { display: false } },
-                            scales: {
-                                y: { beginAtZero: true, ticks: { stepSize: 1 } }
-                            }
-                        }
-                    });
-                } catch (chartError) {
-                    console.error("Chart rendering error:", chartError);
-                }
-            }, 50);
-        }
-
-    } catch (e) {
-        console.error("Feedback Tab Error:", e);
+        // Optional: Render rating distribution charts if needed
+        // You can add chart rendering here if desired
+    } catch (error) {
+        console.error('Error rendering feedback tab:', error);
         content.innerHTML = `<div style="padding:2rem;color:red;">Error loading feedback data.</div>`;
     }
+}
+
+// Driver Assignment Modal after booking approval
+function showDriverAssignmentModal(bookingId) {
+    // Find the booking
+    const booking = adminState.bookings.find(b => b.id === bookingId);
+    if (!booking) {
+        showToast('Booking not found', '#ef4444');
+        return;
+    }
+
+    // Get available drivers and vehicles
+    const availableDrivers = adminState.users.filter(u => u.role === 'Driver' && u.status === 'Active');
+    const availableVehicles = adminState.vehicles.filter(v => v.status === 'active' && v.isAvailable);
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'driverAssignmentModal';
+    modal.style.display = 'flex';
+    modal.style.zIndex = '3000';
+
+    const driverOptions = availableDrivers.map(d => 
+        `<option value="${d.uid}">${d.fullName} (${d.email})</option>`
+    ).join('');
+
+    const vehicleOptions = availableVehicles.map(v => 
+        `<option value="${v.id}">${v.registrationNumber} - ${v.make} ${v.model} (${v.vehicleType})</option>`
+    ).join('');
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Assign Driver & Vehicle</h3>
+                <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <div style="margin-bottom: 1rem; padding: 1rem; background: var(--surface-color); border-radius: 8px;">
+                    <h4 style="margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--text-secondary);">BOOKING DETAILS</h4>
+                    <p style="margin: 0; font-weight: 500;">${booking.pickupLocation || 'N/A'} → ${booking.destination || 'N/A'}</p>
+                    <p style="margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--text-secondary);">
+                        ${new Date(booking.startDate).toLocaleDateString()} | ${booking.vehicleType || 'Any'} | KSH ${booking.price?.toLocaleString() || 'N/A'}
+                    </p>
+                </div>
+
+                <form id="driverAssignmentForm">
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Select Driver</label>
+                        <select id="driverSelect" class="form-control" required style="width: 100%;">
+                            <option value="">Choose a driver...</option>
+                            ${driverOptions}
+                        </select>
+                    </div>
+
+                    <div style="margin-bottom: 1.5rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Select Vehicle</label>
+                        <select id="vehicleSelect" class="form-control" required style="width: 100%;">
+                            <option value="">Choose a vehicle...</option>
+                            ${vehicleOptions}
+                        </select>
+                    </div>
+
+                    <div style="display: flex; gap: 0.75rem;">
+                        <button type="submit" class="btn btn-primary" style="flex: 1;">Assign & Update Status</button>
+                        <button type="button" class="btn btn-secondary" id="skipAssignmentBtn" style="flex: 1;">Skip for Now</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Event listeners
+    modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
+
+    document.getElementById('skipAssignmentBtn').addEventListener('click', () => {
+        modal.remove();
+        showToast('Assignment skipped - you can assign later', '#f59e0b');
+    });
+
+    document.getElementById('driverAssignmentForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const driverId = document.getElementById('driverSelect').value;
+        const vehicleId = document.getElementById('vehicleSelect').value;
+
+        if (!driverId || !vehicleId) {
+            showToast('Please select both driver and vehicle', '#ef4444');
+            return;
+        }
+
+        try {
+            // Assign driver and vehicle to booking
+            await api.assignBooking({ bookingId, driverId, vehicleId });
+            showToast('Driver and vehicle assigned successfully!');
+            modal.remove();
+            // Refresh data
+            await loadAdminData(document.querySelector('.main-content'));
+        } catch (error) {
+            console.error('Assignment failed:', error);
+            showToast('Failed to assign driver and vehicle', '#ef4444');
+        }
+    });
+}
+
+// Edit vehicle modal
+function showEditVehicleModal(vehicleId) {
+    const vehicle = adminState.vehicles.find(v => v.id === vehicleId);
+    if (!vehicle) {
+        showToast('Vehicle not found', '#ef4444');
+        return;
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+    modal.style.zIndex = '3000';
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width:600px;">
+            <div class="modal-header">
+                <h3>Edit Vehicle</h3>
+                <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">×</button>
+            </div>
+            <div class="modal-body" style="padding:1.5rem;">
+                <form id="editVehicleForm" style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
+                    <div>
+                        <label>Registration #</label>
+                        <input type="text" id="editRegNumber" class="form-control" required value="${vehicle.registrationNumber || ''}" />
+                    </div>
+                    <div>
+                        <label>Type</label>
+                        <select id="editVehType" class="form-control">
+                            <option value="sedan" ${vehicle.vehicleType === 'sedan' ? 'selected' : ''}>Sedan</option>
+                            <option value="suv" ${vehicle.vehicleType === 'suv' ? 'selected' : ''}>SUV</option>
+                            <option value="van" ${vehicle.vehicleType === 'van' ? 'selected' : ''}>Van</option>
+                            <option value="bike" ${vehicle.vehicleType === 'bike' ? 'selected' : ''}>Bike</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Make</label>
+                        <input type="text" id="editMake" class="form-control" value="${vehicle.make || ''}" />
+                    </div>
+                    <div>
+                        <label>Model</label>
+                        <input type="text" id="editModel" class="form-control" value="${vehicle.model || ''}" />
+                    </div>
+                    <div>
+                        <label>Year</label>
+                        <input type="number" id="editYear" class="form-control" value="${vehicle.year || ''}" />
+                    </div>
+                    <div>
+                        <label>Price/Day</label>
+                        <input type="number" id="editPriceDay" class="form-control" step="0.01" value="${vehicle.pricePerDay || ''}" />
+                    </div>
+                    <div style="grid-column: span 2; text-align:right;">
+                        <button type="submit" class="btn btn-primary" style="width:150px;">Save</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', e => {
+        if (e.target === modal) modal.remove();
+    });
+
+    const editForm = document.getElementById('editVehicleForm');
+    const submitBtn = editForm.querySelector('button[type="submit"]');
+    
+    editForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        
+        // Disable button and show loading state
+        submitBtn.disabled = true;
+        const originalText = submitBtn.textContent;
+        submitBtn.textContent = 'Saving...';
+        
+        const data = {
+            id: vehicleId,
+            RegistrationNumber: document.getElementById('editRegNumber').value,
+            VehicleType: document.getElementById('editVehType').value,
+            Make: document.getElementById('editMake').value,
+            Model: document.getElementById('editModel').value,
+            Year: parseInt(document.getElementById('editYear').value) || 0,
+            PricePerDay: parseFloat(document.getElementById('editPriceDay').value) || 0,
+        };
+        
+        try {
+            await api.updateVehicle(vehicleId, data);
+            showToast('Vehicle updated successfully', '#10b981');
+            
+            // Remove modal completely from DOM
+            modal.remove();
+            
+            // Re-render fleet tab directly without full data reload
+            const content = document.querySelector('.main-content');
+            renderFleetTab(content);
+            
+        } catch (err) {
+            console.error(err);
+            showToast('Update failed: ' + (err.message || 'Unknown error'), '#ef4444');
+            
+            // Re-enable button on error
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
+        }
+    });
+}
+
+// Update Status Modal
+function showUpdateStatusModal(bookingId) {
+    const booking = adminState.bookings.find(b => b.id === bookingId);
+    if (!booking) {
+        showToast('Booking not found', '#ef4444');
+        return;
+    }
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'statusUpdateModal';
+    modal.style.display = 'flex';
+    modal.style.zIndex = '3000';
+
+    const currentStatus = booking.status;
+    const statusOptions = [
+        { value: 'APPROVED', label: 'Approved', color: '#10b981' },
+        { value: 'ASSIGNED', label: 'Assigned', color: '#3b82f6' },
+        { value: 'IN_PROGRESS', label: 'In Progress', color: '#f59e0b' },
+        { value: 'COMPLETED', label: 'Completed', color: '#22c55e' },
+        { value: 'CANCELLED', label: 'Cancelled', color: '#ef4444' }
+    ];
+
+    const statusHtml = statusOptions.map(option => `
+        <option value="${option.value}" ${option.value === currentStatus ? 'selected' : ''} 
+                style="color: ${option.color};">${option.label}</option>
+    `).join('');
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>Update Booking Status</h3>
+                <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">×</button>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem;">
+                <div style="margin-bottom: 1rem; padding: 1rem; background: var(--surface-color); border-radius: 8px;">
+                    <h4 style="margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--text-secondary);">BOOKING DETAILS</h4>
+                    <p style="margin: 0; font-weight: 500;">${booking.pickupLocation || 'N/A'} → ${booking.destination || 'N/A'}</p>
+                    <p style="margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--text-secondary);">
+                        Current Status: <span style="font-weight: 600; color: ${statusOptions.find(s => s.value === currentStatus)?.color || '#666'};">${currentStatus}</span>
+                    </p>
+                </div>
+
+                <form id="statusUpdateForm">
+                    <div style="margin-bottom: 1.5rem;">
+                        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">New Status</label>
+                        <select id="statusSelect" class="form-control" required style="width: 100%;">
+                            ${statusHtml}
+                        </select>
+                    </div>
+
+                    <div style="display: flex; gap: 0.75rem;">
+                        <button type="submit" class="btn btn-primary" style="flex: 1;">Update Status</button>
+                        <button type="button" class="btn btn-secondary" id="cancelStatusUpdateBtn" style="flex: 1;">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Event listeners
+    modal.querySelector('.modal-close-btn').addEventListener('click', () => modal.remove());
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) modal.remove();
+    });
+
+    document.getElementById('cancelStatusUpdateBtn').addEventListener('click', () => modal.remove());
+
+    document.getElementById('statusUpdateForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const newStatus = document.getElementById('statusSelect').value;
+
+        if (newStatus === currentStatus) {
+            showToast('Status unchanged', '#f59e0b');
+            modal.remove();
+            return;
+        }
+
+        try {
+            await api.updateBookingStatus(bookingId, newStatus);
+            showToast(`Status updated to ${newStatus}`);
+            modal.remove();
+            // Refresh data
+            await loadAdminData(document.querySelector('.main-content'));
+        } catch (error) {
+            console.error('Status update failed:', error);
+            showToast('Failed to update status', '#ef4444');
+        }
+    });
 }

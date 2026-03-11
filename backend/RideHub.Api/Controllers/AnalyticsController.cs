@@ -108,23 +108,37 @@ namespace RideHub.Api.Controllers
         
         public async Task<IActionResult> GetSummary()
         {
-            var bookings = await _firestoreService.GetAllBookingsAsync();
-            
-            var totalRevenue = bookings
-                .Where(b => b.PaymentStatus == "PAID")
-                .Sum(b => b.Price);
-
-            var totalBookings = bookings.Count;
-
-            var completedTrips = bookings
-                .Count(b => b.Status == "COMPLETED");
-
-            return Ok(new
+            try
             {
-                totalRevenue,
-                totalBookings,
-                completedTrips
-            });
+                var bookings = await _firestoreService.GetAllBookingsAsync();
+                
+                var totalRevenue = bookings
+                    .Where(b => b.PaymentStatus == "PAID" && b.Status == "COMPLETED")
+                    .Sum(b => b.Price);
+
+                var totalBookings = bookings.Count;
+
+                var completedTrips = bookings
+                    .Count(b => b.Status == "COMPLETED");
+
+                var pendingBookings = bookings.Count(b => b.Status == "PENDING");
+                var approvedBookings = bookings.Count(b => b.Status == "APPROVED");
+                var cancelledBookings = bookings.Count(b => b.Status == "CANCELLED");
+
+                return Ok(new
+                {
+                    totalRevenue,
+                    totalBookings,
+                    completedTrips,
+                    pendingBookings,
+                    approvedBookings,
+                    cancelledBookings
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error calculating summary: {ex.Message}");
+            }
         }
 
         [HttpGet("driver/{driverId}")]
@@ -145,21 +159,29 @@ namespace RideHub.Api.Controllers
         }
 
         [HttpGet("trends")]
-        [RoleAuthorize("Admin")]
         public async Task<IActionResult> GetTrends()
         {
-            var bookings = await _firestoreService.GetAllBookingsAsync();
+            try
+            {
+                var bookings = await _firestoreService.GetAllBookingsAsync();
 
-            var destinationCounts = bookings
-                .Where(b => !string.IsNullOrEmpty(b.Destination))
-                .GroupBy(b => b.Destination)
-                .Select(g => new {
-                    destination = g.Key,
-                    count = g.Count()
-                })
-                .ToList();
+                var destinationCounts = bookings
+                    .Where(b => !string.IsNullOrEmpty(b.Destination))
+                    .GroupBy(b => b.Destination)
+                    .Select(g => new {
+                        destination = g.Key,
+                        count = g.Count()
+                    })
+                    .OrderByDescending(x => x.count)
+                    .Take(10)
+                    .ToList();
 
-            return Ok(destinationCounts);
+                return Ok(destinationCounts);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error calculating trends: {ex.Message}");
+            }
         }
     }
 }

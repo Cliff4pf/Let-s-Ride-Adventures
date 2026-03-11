@@ -20,6 +20,14 @@ namespace RideHub.Api.Services
                 return;
             }
 
+            // only push notifications to real Gmail accounts to avoid spamming test addresses
+            if (!toEmail.EndsWith("@gmail.com", StringComparison.OrdinalIgnoreCase) &&
+                !toEmail.EndsWith("@googlemail.com", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"Skipping email to non-Gmail address: {toEmail}");
+                return;
+            }
+
             var client = new SendGridClient(_apiKey);
             var from = new EmailAddress("no-reply@ridehub.com", "RideHub");
             var to = new EmailAddress(toEmail);

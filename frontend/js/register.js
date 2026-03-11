@@ -40,7 +40,12 @@ if (registerForm) {
 
         } catch (error) {
             console.error("Registration failed:", error);
-            errorDiv.textContent = error.message;
+            let msg = error.message || 'Failed to create account.';
+            // common network issue
+            if (error instanceof TypeError && /Failed to fetch/i.test(error.message)) {
+                msg = 'Network error. Please check your connection and try again.';
+            }
+            errorDiv.textContent = msg;
             errorDiv.style.display = 'block';
         } finally {
             registerBtn.disabled = false;
