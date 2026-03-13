@@ -25,6 +25,33 @@ namespace RideHub.Api.Controllers
             var vehicles = await _firestoreService.GetAllVehiclesAsync();
             var users = await _firestoreService.GetAllUsersAsync();
 
+            // Total Revenue: sum of completed paid bookings
+            var totalRevenue = bookings
+                .Where(b => b.Status == "COMPLETED" && b.PaymentStatus == "PAID")
+                .Sum(b => b.Price);
+
+            // Peak Hours Analysis: group by hour of StartDate
+            var peakHours = bookings
+                .Where(b => b.StartDate != null)
+                .GroupBy(b => b.StartDate.Hour)
+                .Select(g => new { Hour = g.Key, Bookings = g.Count() })
+                .OrderByDescending(g => g.Bookings)
+                .ToList();
+
+            // Monthly Bookings and Revenue Forecast
+            var monthlyData = bookings
+                .GroupBy(b => b.CreatedAt.ToDateTime().ToString("MMM yyyy"))
+                .Select(g => new
+                {
+                    Month = g.Key,
+                    Bookings = g.Count(),
+                    Completed = g.Count(b => b.Status == "COMPLETED"),
+                    Cancelled = g.Count(b => b.Status == "CANCELLED"),
+                    Revenue = g.Where(b => b.Status == "COMPLETED" && b.PaymentStatus == "PAID").Sum(b => b.Price)
+                })
+                .OrderBy(m => DateTime.ParseExact(m.Month, "MMM yyyy", null))
+                .ToList();
+
             // 1. Descriptive Analytics
             var bookingsPerMonth = bookings
                 .GroupBy(b => b.CreatedAt.ToDateTime().ToString("MMM yyyy"))
@@ -86,6 +113,9 @@ namespace RideHub.Api.Controllers
 
             return Ok(new
             {
+                TotalRevenue = totalRevenue,
+                PeakHours = peakHours,
+                MonthlyData = monthlyData,
                 Descriptive = new
                 {
                     BookingsPerMonth = bookingsPerMonth,

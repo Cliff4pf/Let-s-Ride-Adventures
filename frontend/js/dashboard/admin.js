@@ -1,7 +1,7 @@
 // admin.js
 import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
-import { attachLogoutListener } from "./logout-helper.js";
+import { attachLogoutListener, handleLogout } from "./logout-helper.js";
 import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
 import { showBookingDetailModal } from "./booking-detail-modal.js";
 
@@ -97,18 +97,7 @@ function setupMenuBarEvents() {
         });
     }
 
-    // Logout button in settings
-    if (logoutSettingBtn) {
-        logoutSettingBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            const { signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
-            const { auth } = await import('../firebase.js');
-            await signOut(auth);
-            localStorage.removeItem('ridehub_token');
-            localStorage.removeItem('ridehub_role');
-            window.location.href = 'index.html';
-        });
-    }
+    // Logout button in settings is wired automatically via logout-helper
 
     // Notifications button - show audit logs
     if (notificationBtn) {
@@ -685,7 +674,7 @@ function renderOverviewTab(content) {
                             .map(d => {
                                 const driverTrips = adminState.bookings.filter(b => b.assignedDriverId === d.uid);
                                 const completedTrips = driverTrips.filter(b => b.status === 'COMPLETED').length;
-                                const driverFeedback = adminState.feedback.filter(f => f.driverId === d.uid);
+                                const driverFeedback = adminState.feedback.filter(f => f.targetUserId === d.uid);
                                 const avgRating = driverFeedback.length > 0
                                     ? (driverFeedback.reduce((sum, f) => sum + (f.rating || 0), 0) / driverFeedback.length).toFixed(1)
                                     : 'N/A';
@@ -998,7 +987,7 @@ async function reinstateUser(uid, content) {
 function renderFleetTab(content) {
     // form to add new vehicle
     const addFormHtml = `
-        <div class="form-card" style="margin-bottom:2rem; max-width:600px;">
+        <div class="form-card" id="addVehicleSection" style="margin-bottom:2rem; max-width:600px; display:none;">
             <h3 style="margin-bottom:1rem;">Add New Vehicle</h3>
             <form id="vehicleForm" style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
                 <div>
@@ -1057,31 +1046,57 @@ function renderFleetTab(content) {
     `).join('');
 
     content.innerHTML = `
-        <div class="page-header">
+        <div class="page-header" style="display:flex; justify-content:space-between; align-items:center;">
             <h2>Live Fleet Controls</h2>
+            <div style="position:relative;">
+                <button class="btn btn-primary" id="fleetControlsBtn" style="display:flex; align-items:center; gap:0.5rem;">
+                    ⚙️ Fleet Operations <i class="fas fa-chevron-down" style="font-size:0.75rem;"></i>
+                </button>
+                <div id="fleetControlsDropdown" style="display:none; position:absolute; top:100%; right:0; background:white; border:1px solid var(--border-color); border-radius:8px; box-shadow:0 10px 25px rgba(0,0,0,0.15); min-width:200px; z-index:1000; margin-top:0.5rem;">
+                    <button class="fleet-dropdown-item" data-action="add-vehicle" style="width:100%; text-align:left; padding:0.75rem 1rem; background:none; border:none; cursor:pointer; display:flex; align-items:center; gap:0.5rem; color:var(--text-primary); transition:background 0.2s; border-bottom:1px solid var(--border-color);">
+                        <i class="fas fa-plus" style="font-size:0.9rem;"></i>
+                        <span>Add New Vehicle</span>
+                    </button>
+                    <button class="fleet-dropdown-item" data-action="assign-driver" style="width:100%; text-align:left; padding:0.75rem 1rem; background:none; border:none; cursor:pointer; display:flex; align-items:center; gap:0.5rem; color:var(--text-primary); transition:background 0.2s; border-bottom:1px solid var(--border-color);">
+                        <i class="fas fa-link" style="font-size:0.9rem;"></i>
+                        <span>Assign Driver to Vehicle</span>
+                    </button>
+                    <button class="fleet-dropdown-item" data-action="view-assignments" style="width:100%; text-align:left; padding:0.75rem 1rem; background:none; border:none; cursor:pointer; display:flex; align-items:center; gap:0.5rem; color:var(--text-primary); transition:background 0.2s;">
+                        <i class="fas fa-list" style="font-size:0.9rem;"></i>
+                        <span>View Assignments</span>
+                    </button>
+                </div>
+            </div>
         </div>
+
         ${addFormHtml}
         
         <!-- Driver-Vehicle Assignment Section -->
-        <div class="form-card" style="margin-bottom:2rem; max-width:600px;">
+        <div class="form-card" id="assignDriverSection" style="margin-bottom:2rem; max-width:600px; display:none;">
             <h3 style="margin-bottom:1rem;">Assign Driver to Vehicle</h3>
             <form id="fleetAssignmentForm" style="display:grid; grid-template-columns:1fr 1fr; gap:1rem;">
                 <div>
                     <label>Select Driver</label>
                     <select id="assignDriver" class="form-control" required>
                         <option value="">Choose driver...</option>
-                        ${adminState.users.filter(u => u.role === 'Driver' && u.status === 'Active').map(d => 
-                            `<option value="${d.uid}">${d.fullName} (${d.email})</option>`
-                        ).join('')}
+                        ${adminState.users
+                            .filter(u => u.role === 'Driver' && u.status === 'Active')
+                            .filter(d => !adminState.vehicles.some(v => v.assignedDriverId === d.uid))
+                            .map(d => 
+                                `<option value="${d.uid}">${d.fullName} (${d.email})</option>`
+                            ).join('')}
                     </select>
                 </div>
                 <div>
                     <label>Select Vehicle</label>
                     <select id="assignVehicle" class="form-control" required>
                         <option value="">Choose vehicle...</option>
-                        ${adminState.vehicles.filter(v => v.status === 'active').map(v => 
-                            `<option value="${v.id}">${v.registrationNumber} - ${v.make} ${v.model}</option>`
-                        ).join('')}
+                        ${adminState.vehicles
+                            .filter(v => v.status === 'active')
+                            .filter(v => !v.assignedDriverId)
+                            .map(v => 
+                                `<option value="${v.id}">${v.registrationNumber} - ${v.make} ${v.model}</option>`
+                            ).join('')}
                     </select>
                 </div>
                 <div style="grid-column: span 2; text-align:right;">
@@ -1225,14 +1240,86 @@ function renderFleetTab(content) {
                 return;
             }
 
+            // Check if driver has an active assignment
+            const driverActiveBooking = adminState.bookings.find(b =>
+                b.assignedDriverId === driverId && 
+                (b.status === 'ASSIGNED' || b.status === 'IN_PROGRESS')
+            );
+
+            if (driverActiveBooking) {
+                showToast(
+                    `Driver has an active trip (${driverActiveBooking.destination}). Cannot reassign until trip is completed.`,
+                    '#f59e0b'
+                );
+                return;
+            }
+
             try {
-                await api.assignDriverToVehicle(driverId, vehicleId);
-                showToast('Driver assigned to vehicle successfully');
-                await loadAdminData(content);
+                const res = await api.assignDriverToVehicle(driverId, vehicleId);
+                if (res.ok) {
+                    showToast('Driver assigned to vehicle successfully');
+                    await loadAdminData(content);
+                } else {
+                    const errorBody = await res.json().catch(() => ({}));
+                    const msg = errorBody?.message || errorBody?.error || 'Assignment failed';
+                    showToast(msg, '#ef4444');
+                }
             } catch (err) {
                 console.error(err);
                 showToast('Assignment failed', '#ef4444');
             }
+        });
+    }
+
+    // Fleet Operations Dropdown Toggle
+    const fleetControlsBtn = document.getElementById('fleetControlsBtn');
+    const fleetControlsDropdown = document.getElementById('fleetControlsDropdown');
+    const addVehicleSection = document.getElementById('addVehicleSection');
+    const assignDriverSection = document.getElementById('assignDriverSection');
+
+    if (fleetControlsBtn && fleetControlsDropdown) {
+        fleetControlsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            fleetControlsDropdown.style.display = fleetControlsDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!fleetControlsBtn.contains(e.target) && !fleetControlsDropdown.contains(e.target)) {
+                fleetControlsDropdown.style.display = 'none';
+            }
+        });
+
+        // Dropdown item hover effects
+        fleetControlsDropdown.querySelectorAll('.fleet-dropdown-item').forEach(item => {
+            item.addEventListener('mouseenter', () => {
+                item.style.background = 'var(--surface-hover)';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+            });
+
+            // Dropdown item click handlers
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                const action = item.getAttribute('data-action');
+                
+                // Hide all sections
+                addVehicleSection.style.display = 'none';
+                assignDriverSection.style.display = 'none';
+
+                // Show selected section
+                if (action === 'add-vehicle') {
+                    addVehicleSection.style.display = 'block';
+                    addVehicleSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                } else if (action === 'assign-driver') {
+                    assignDriverSection.style.display = 'block';
+                    assignDriverSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+
+                // Close dropdown
+                fleetControlsDropdown.style.display = 'none';
+            });
         });
     }
 
@@ -1255,23 +1342,32 @@ function renderFleetTab(content) {
 }
 
 async function renderAnalyticsTab(content) {
+    console.log('Rendering analytics tab, content element:', content);
+    if (!content) {
+        console.error('Content element is null');
+        return;
+    }
     content.innerHTML = `<div style="padding:2rem;text-align:center;">Analyzing System Data...</div>`;
     try {
-        const [sumRes, trRes] = await Promise.all([
+        const [sumRes, trRes, analyticsRes] = await Promise.all([
             api.getSummary(),
-            api.getTrends()
+            api.getTrends(),
+            api.getAnalyticsDashboard() // new analytics endpoint
         ]);
 
         if (!sumRes.ok) throw new Error(`Summary API Failed: ${sumRes.status} ${await sumRes.text()}`);
         if (!trRes.ok) throw new Error(`Trends API Failed: ${trRes.status} ${await trRes.text()}`);
+        if (!analyticsRes.ok) throw new Error(`Analytics API Failed: ${analyticsRes.status} ${await analyticsRes.text()}`);
 
         const sumRaw = await sumRes.json();
         const trRaw = await trRes.json();
+        const analyticsRaw = await analyticsRes.json();
 
         const summaryData = sumRaw.data || sumRaw;
         const trendsData = trRaw.data || trRaw;
+        const analyticsData = analyticsRaw.data || analyticsRaw;
 
-        const totalRevenue = summaryData.totalRevenue ?? summaryData.TotalRevenue ?? 0;
+        const totalRevenue = analyticsData.TotalRevenue ?? summaryData.totalRevenue ?? summaryData.TotalRevenue ?? 0;
         const totalBookings = summaryData.totalBookings ?? summaryData.TotalBookings ?? 0;
         const completedTrips = summaryData.completedTrips ?? summaryData.CompletedTrips ?? 0;
 
@@ -1291,15 +1387,20 @@ async function renderAnalyticsTab(content) {
         // Employee performance metrics
         const driverPerformance = {};
         adminState.users.filter(u => u.role === 'Driver').forEach(driver => {
-            const driverBookings = adminState.bookings.filter(b => b.driverId === driver.uid);
-            const driverFeedback = adminState.feedback.filter(f => f.driverId === driver.uid);
+            const driverBookings = adminState.bookings.filter(b => b.assignedDriverId === driver.uid);
+            const driverFeedback = adminState.feedback.filter(f => f.targetUserId === driver.uid);
             const avgRating = driverFeedback.length > 0 
                 ? (driverFeedback.reduce((sum, f) => sum + (f.rating || 0), 0) / driverFeedback.length).toFixed(1)
                 : 'N/A';
             const completedTrips = driverBookings.filter(b => b.status === 'COMPLETED').length;
+
+            // determine display name, fall back to email if necessary
+            const driverName = driver.fullName 
+                ? driver.fullName 
+                : `${driver.firstName || ''} ${driver.lastName || ''}`.trim() || driver.email || 'Unknown';
             
             driverPerformance[driver.uid] = {
-                name: driver.firstName + ' ' + driver.lastName,
+                name: driverName,
                 bookings: driverBookings.length,
                 completed: completedTrips,
                 avgRating: avgRating,
@@ -1320,19 +1421,28 @@ async function renderAnalyticsTab(content) {
         // Workload analysis - bookings per employee
         const employeeWorkload = {};
         adminState.bookings.forEach(b => {
-            if (b.driverId) {
-                employeeWorkload[b.driverId] = (employeeWorkload[b.driverId] || 0) + 1;
+            if (b.assignedDriverId) {
+                employeeWorkload[b.assignedDriverId] = (employeeWorkload[b.assignedDriverId] || 0) + 1;
             }
         });
 
-        // Peak hours analysis
-        const hoursData = {};
-        adminState.bookings.forEach(b => {
-            if (b.scheduledDate) {
-                const hour = new Date(b.scheduledDate).getHours();
-                hoursData[hour] = (hoursData[hour] || 0) + 1;
-            }
-        });
+        // Peak hours analysis - use API data if available, else local calculation
+        let hoursData = {};
+        if (analyticsData.PeakHours && analyticsData.PeakHours.length > 0) {
+            analyticsData.PeakHours.forEach(ph => {
+                hoursData[ph.Hour] = ph.Bookings;
+            });
+        } else {
+            adminState.bookings.forEach(b => {
+                if (b.scheduledDate) {
+                    const hour = new Date(b.scheduledDate).getHours();
+                    hoursData[hour] = (hoursData[hour] || 0) + 1;
+                } else if (b.startDate) {
+                    const hour = new Date(b.startDate).getHours();
+                    hoursData[hour] = (hoursData[hour] || 0) + 1;
+                }
+            });
+        }
 
         // Average order value
         const completedRevenue = adminState.bookings
@@ -1346,6 +1456,7 @@ async function renderAnalyticsTab(content) {
         const tLabels = tData.map(d => d.destination || d.Destination || 'Unknown');
         const tCounts = tData.map(d => d.count || d.Count || 0);
 
+        console.log('Setting analytics HTML content');
         content.innerHTML = `
             <div class="page-header">
                 <h2>📊 Data-Driven Intelligence Dashboard</h2>
@@ -1455,94 +1566,166 @@ async function renderAnalyticsTab(content) {
         `;
 
         setTimeout(() => {
+            console.log('Creating charts, content element:', content);
             // Revenue by Vehicle Type
-            const vehicleLabels = Object.keys(vehicleRevenue);
-            const vehicleValues = Object.values(vehicleRevenue);
-            new Chart(document.getElementById("vehicleRevenueChart"), {
-                type: "doughnut",
-                data: {
-                    labels: vehicleLabels.length > 0 ? vehicleLabels : ['No Data'],
-                    datasets: [{
-                        data: vehicleValues.length > 0 ? vehicleValues : [0],
-                        backgroundColor: ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'],
-                        borderRadius: 4
-                    }]
-                },
-                options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
-            });
+            const vehicleChartCanvas = document.getElementById("vehicleRevenueChart");
+            if (vehicleChartCanvas) {
+                const vehicleLabels = Object.keys(vehicleRevenue);
+                const vehicleValues = Object.values(vehicleRevenue);
+                new Chart(vehicleChartCanvas, {
+                    type: "doughnut",
+                    data: {
+                        labels: vehicleLabels.length > 0 ? vehicleLabels : ['No Data'],
+                        datasets: [{
+                            data: vehicleValues.length > 0 ? vehicleValues : [0],
+                            backgroundColor: ['#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'],
+                            borderRadius: 4
+                        }]
+                    },
+                    options: { responsive: true, plugins: { legend: { position: 'bottom' } } }
+                });
+            } else {
+                console.error('vehicleRevenueChart canvas not found');
+            }
 
             // Demand by Destination
-            new Chart(document.getElementById("trendChart"), {
-                type: "pie",
-                data: {
-                    labels: tLabels.length > 0 ? tLabels : ['No Data'],
-                    datasets: [{
-                        data: tCounts.length > 0 ? tCounts : [0],
-                        backgroundColor: [
-                            '#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'
-                        ]
-                    }]
-                },
-                options: { responsive: true, maintainAspectRatio: false }
-            });
+            const trendChartCanvas = document.getElementById("trendChart");
+            if (trendChartCanvas) {
+                new Chart(trendChartCanvas, {
+                    type: "pie",
+                    data: {
+                        labels: tLabels.length > 0 ? tLabels : ['No Data'],
+                        datasets: [{
+                            data: tCounts.length > 0 ? tCounts : [0],
+                            backgroundColor: [
+                                '#4f46e5', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'
+                            ]
+                        }]
+                    },
+                    options: { responsive: true, maintainAspectRatio: false }
+                });
+            } else {
+                console.error('trendChart canvas not found');
+            }
 
             // Peak Hours
-            const hoursLabels = Array.from({length: 24}, (_, i) => i + ':00');
-            const hoursValues = hoursLabels.map((_, i) => hoursData[i] || 0);
-            new Chart(document.getElementById("peakHoursChart"), {
-                type: "line",
-                data: {
-                    labels: hoursLabels,
-                    datasets: [{
-                        label: 'Bookings per Hour',
-                        data: hoursValues,
-                        borderColor: '#4f46e5',
-                        backgroundColor: 'rgba(79, 70, 229, 0.1)',
-                        tension: 0.4,
-                        fill: true
-                    }]
-                },
-                options: { responsive: true, plugins: { legend: { display: false } } }
-            });
+            const peakHoursChartCanvas = document.getElementById("peakHoursChart");
+            if (peakHoursChartCanvas) {
+                const hoursLabels = Array.from({length: 24}, (_, i) => i + ':00');
+                const hoursValues = hoursLabels.map((_, i) => hoursData[i] || 0);
+                new Chart(peakHoursChartCanvas, {
+                    type: "line",
+                    data: {
+                        labels: hoursLabels,
+                        datasets: [{
+                            label: 'Bookings per Hour',
+                            data: hoursValues,
+                            borderColor: '#4f46e5',
+                            backgroundColor: 'rgba(79, 70, 229, 0.1)',
+                            tension: 0.4,
+                            fill: true
+                        }]
+                    },
+                    options: { responsive: true, plugins: { legend: { display: false } } }
+                });
+            } else {
+                console.error('peakHoursChart canvas not found');
+            }
 
             // Workload Distribution (Top 10 drivers)
-            const topDrivers = sortedDrivers.slice(0, 10);
-            new Chart(document.getElementById("workloadChart"), {
-                type: "bar",
-                data: {
-                    labels: topDrivers.map(d => d.name.split(' ')[0]),
-                    datasets: [{
-                        label: 'Total Bookings',
-                        data: topDrivers.map(d => d.bookings),
-                        backgroundColor: '#3b82f6'
-                    }]
-                },
-                options: { 
-                    responsive: true, 
-                    indexAxis: 'x',
-                    plugins: { legend: { display: false } }
-                }
-            });
+            const workloadChartCanvas = document.getElementById("workloadChart");
+            if (workloadChartCanvas) {
+                const topDrivers = sortedDrivers.slice(0, 10);
+                new Chart(workloadChartCanvas, {
+                    type: "bar",
+                    data: {
+                        labels: topDrivers.map(d => d.name.split(' ')[0]),
+                        datasets: [{
+                            label: 'Total Bookings',
+                            data: topDrivers.map(d => d.bookings),
+                            backgroundColor: '#3b82f6'
+                        }]
+                    },
+                    options: { 
+                        responsive: true, 
+                        indexAxis: 'x',
+                        plugins: { legend: { display: false } }
+                    }
+                });
+            } else {
+                console.error('workloadChart canvas not found');
+            }
 
-            // Monthly Bookings
-            new Chart(document.getElementById("bookingTimeChart"), {
-                type: "bar",
-                data: {
-                    labels: ["Revenue", "Bookings", "Completed", "Cancelled"],
-                    datasets: [{
-                        label: "Platform Metrics",
-                        data: [
-                            totalRevenue,
-                            totalBookings,
-                            completedTrips,
-                            cancelledBookings
-                        ],
-                        backgroundColor: ["#10b981", "#3b82f6", "#f59e0b", "#ef4444"],
-                        borderRadius: 4
-                    }]
-                },
-                options: { responsive: true, plugins: { legend: { display: false } } }
-            });
+            // Monthly Bookings & Revenue Forecast - use API data if available, else fallback to summary
+            const bookingTimeChartCanvas = document.getElementById("bookingTimeChart");
+            if (bookingTimeChartCanvas) {
+                if (analyticsData.MonthlyData && analyticsData.MonthlyData.length > 0) {
+                    // Use monthly data for a multi-series chart
+                    const monthlyLabels = analyticsData.MonthlyData.map(m => m.Month);
+                    const bookingsData = analyticsData.MonthlyData.map(m => m.Bookings);
+                    const completedData = analyticsData.MonthlyData.map(m => m.Completed);
+                    const cancelledData = analyticsData.MonthlyData.map(m => m.Cancelled);
+                    const revenueData = analyticsData.MonthlyData.map(m => m.Revenue);
+
+                    new Chart(bookingTimeChartCanvas, {
+                        type: "line", // Change to line for trends
+                        data: {
+                            labels: monthlyLabels,
+                            datasets: [{
+                                label: 'Total Bookings',
+                                data: bookingsData,
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                tension: 0.4
+                            }, {
+                                label: 'Completed Bookings',
+                                data: completedData,
+                                borderColor: '#10b981',
+                                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                tension: 0.4
+                            }, {
+                                label: 'Cancelled Bookings',
+                                data: cancelledData,
+                                borderColor: '#ef4444',
+                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                tension: 0.4
+                            }, {
+                                label: 'Revenue (KSH)',
+                                data: revenueData,
+                                borderColor: '#f59e0b',
+                                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                                tension: 0.4,
+                                yAxisID: 'y1' // Secondary axis for revenue
+                            }]
+                        },
+                        options: { 
+                            responsive: true, 
+                            interaction: { mode: 'index', intersect: false },
+                            scales: {
+                                y: { beginAtZero: true, title: { display: true, text: 'Bookings' } },
+                                y1: { beginAtZero: true, position: 'right', title: { display: true, text: 'Revenue (KSH)' }, grid: { drawOnChartArea: false } }
+                            }
+                        }
+                    });
+                } else {
+                    // Fallback to summary bar chart
+                    new Chart(bookingTimeChartCanvas, {
+                        type: "bar",
+                        data: {
+                            labels: ["Revenue", "Bookings", "Completed", "Cancelled"],
+                            datasets: [{
+                                label: "Platform Metrics",
+                                data: [totalRevenue, totalBookings, completedTrips, cancelledBookings],
+                                backgroundColor: ["#10b981", "#3b82f6", "#f59e0b", "#ef4444"],
+                                borderRadius: 4
+                            }]
+                        },
+                        options: { responsive: true, plugins: { legend: { display: false } } }
+                    });
+                }
+            } else {
+                console.error('bookingTimeChart canvas not found');
+            }
         }, 100);
     } catch (e) {
         console.error('Analytics error:', e);
@@ -1756,7 +1939,7 @@ function showDriverAssignmentModal(bookingId) {
     ).join('');
 
     const vehicleOptions = availableVehicles.map(v => 
-        `<option value="${v.id}">${v.registrationNumber} - ${v.make} ${v.model} (${v.vehicleType})</option>`
+        `<option value="${v.id}" data-driver-id="${v.assignedDriverId || ''}">${v.registrationNumber} - ${v.make} ${v.model} (${v.vehicleType}) - ${v.assignedDriverId ? 'Auto Assigned' : 'Unassigned'}</option>`
     ).join('');
 
     modal.innerHTML = `
@@ -1777,8 +1960,8 @@ function showDriverAssignmentModal(bookingId) {
                 <form id="driverAssignmentForm">
                     <div style="margin-bottom: 1rem;">
                         <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Select Driver</label>
-                        <select id="driverSelect" class="form-control" required style="width: 100%;">
-                            <option value="">Choose a driver...</option>
+                        <select id="driverSelect" class="form-control" style="width: 100%;">
+                            <option value="">Auto-assigned from vehicle</option>
                             ${driverOptions}
                         </select>
                     </div>
@@ -1808,6 +1991,27 @@ function showDriverAssignmentModal(bookingId) {
         if (e.target === modal) modal.remove();
     });
 
+    const vehicleSelect = document.getElementById('vehicleSelect');
+    const driverSelect = document.getElementById('driverSelect');
+
+    // Auto-assign driver when vehicle is selected
+    vehicleSelect.addEventListener('change', () => {
+        const selectedOption = vehicleSelect.options[vehicleSelect.selectedIndex];
+        const assignedDriverId = selectedOption.getAttribute('data-driver-id');
+        
+        if (assignedDriverId) {
+            driverSelect.value = assignedDriverId;
+            driverSelect.disabled = true;
+            driverSelect.style.opacity = '0.7';
+            driverSelect.style.cursor = 'not-allowed';
+        } else {
+            driverSelect.disabled = false;
+            driverSelect.style.opacity = '1';
+            driverSelect.style.cursor = 'pointer';
+            driverSelect.value = '';
+        }
+    });
+
     document.getElementById('skipAssignmentBtn').addEventListener('click', () => {
         modal.remove();
         showToast('Assignment skipped - you can assign later', '#f59e0b');
@@ -1818,14 +2022,14 @@ function showDriverAssignmentModal(bookingId) {
         const driverId = document.getElementById('driverSelect').value;
         const vehicleId = document.getElementById('vehicleSelect').value;
 
-        if (!driverId || !vehicleId) {
-            showToast('Please select both driver and vehicle', '#ef4444');
+        if (!vehicleId) {
+            showToast('Please select a vehicle', '#ef4444');
             return;
         }
 
         try {
-            // Assign driver and vehicle to booking
-            await api.assignBooking({ bookingId, driverId, vehicleId });
+            // Assign vehicle to booking; backend will auto-assign driver if not specified
+            await api.assignBooking({ bookingId, driverId: driverId || undefined, vehicleId });
             showToast('Driver and vehicle assigned successfully!');
             modal.remove();
             // Refresh data

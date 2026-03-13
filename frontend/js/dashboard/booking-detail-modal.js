@@ -300,12 +300,18 @@ export async function showBookingDetailModal(booking, allUsers = []) {
                 assignDiv.innerHTML = `
                     <h4 style="margin:0 0 0.5rem;">Assign Driver & Vehicle</h4>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-                        <select id="assignDriverSelect" style="width:100%;padding:0.5rem;">
-                            <option value="">Select Driver</option>
-                        </select>
-                        <select id="assignVehicleSelect" style="width:100%;padding:0.5rem;">
-                            <option value="">Select Vehicle</option>
-                        </select>
+                        <div>
+                            <label style="font-size:0.875rem;color:var(--text-secondary);display:block;margin-bottom:0.25rem;">Driver</label>
+                            <select id="assignDriverSelect" style="width:100%;padding:0.5rem;">
+                                <option value="">Auto-assigned from vehicle</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:0.875rem;color:var(--text-secondary);display:block;margin-bottom:0.25rem;">Vehicle</label>
+                            <select id="assignVehicleSelect" style="width:100%;padding:0.5rem;">
+                                <option value="">Select Vehicle</option>
+                            </select>
+                        </div>
                     </div>
                     <button id="confirmAssignBtn" class="btn btn-primary" style="margin-top:1rem;">Confirm Assignment</button>
                 `;
@@ -319,12 +325,38 @@ export async function showBookingDetailModal(booking, allUsers = []) {
                     opt.textContent = d.fullName;
                     driverSelect.appendChild(opt);
                 });
+                
                 const vehicleSelect = assignDiv.querySelector('#assignVehicleSelect');
-                vehicleList.forEach(v => {
+                // Filter to only show available vehicles
+                vehicleList.filter(v => v.isAvailable === true).forEach(v => {
                     const opt = document.createElement('option');
                     opt.value = v.id;
-                    opt.textContent = `${v.registrationNumber} (${v.model})`;
+                    opt.textContent = `${v.registrationNumber} (${v.model}) - ${v.assignedDriverId ? 'Assigned to Driver' : 'Unassigned'}`;
                     vehicleSelect.appendChild(opt);
+                });
+
+                // Auto-assign driver when vehicle is selected
+                vehicleSelect.addEventListener('change', () => {
+                    const selectedVehicleId = vehicleSelect.value;
+                    if (selectedVehicleId) {
+                        const vehicle = vehicleList.find(v => v.id === selectedVehicleId);
+                        if (vehicle && vehicle.assignedDriverId) {
+                            driverSelect.value = vehicle.assignedDriverId;
+                            driverSelect.disabled = true;
+                            driverSelect.style.opacity = '0.7';
+                            driverSelect.style.cursor = 'not-allowed';
+                        } else {
+                            driverSelect.disabled = false;
+                            driverSelect.style.opacity = '1';
+                            driverSelect.style.cursor = 'pointer';
+                            driverSelect.value = '';
+                        }
+                    } else {
+                        driverSelect.disabled = false;
+                        driverSelect.style.opacity = '1';
+                        driverSelect.style.cursor = 'pointer';
+                        driverSelect.value = '';
+                    }
                 });
 
                 // handlers
@@ -354,12 +386,13 @@ export async function showBookingDetailModal(booking, allUsers = []) {
                 assignDiv.querySelector('#confirmAssignBtn').addEventListener('click', async () => {
                     const driverId = driverSelect.value;
                     const vehicleId = vehicleSelect.value;
-                    if (!driverId || !vehicleId) {
-                        alert('Please select both a driver and a vehicle.');
+                    if (!vehicleId) {
+                        alert('Please select a vehicle.');
                         return;
                     }
                     try {
-                        await api.assignBooking({ bookingId: booking.id, driverId, vehicleId });
+                        // Send only vehicleId; backend will auto-assign driver if not specified
+                        await api.assignBooking({ bookingId: booking.id, driverId: driverId || undefined, vehicleId });
                         showToast('Booking approved and assigned!', '#10b981');
                         closeModal();
                         notifyChange();
@@ -378,14 +411,20 @@ export async function showBookingDetailModal(booking, allUsers = []) {
                 assignDiv.innerHTML = `
                     <h4 style="margin:0;">Assign Driver & Vehicle</h4>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
-                        <select id="assignDriverSelect" style="width:100%;padding:0.5rem;">
-                            <option value="">Select Driver</option>
-                        </select>
-                        <select id="assignVehicleSelect" style="width:100%;padding:0.5rem;">
-                            <option value="">Select Vehicle</option>
-                        </select>
+                        <div>
+                            <label style="font-size:0.875rem;color:var(--text-secondary);display:block;margin-bottom:0.25rem;">Driver</label>
+                            <select id="assignDriverSelect" style="width:100%;padding:0.5rem;">
+                                <option value="">Auto-assigned from vehicle</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size:0.875rem;color:var(--text-secondary);display:block;margin-bottom:0.25rem;">Vehicle</label>
+                            <select id="assignVehicleSelect" style="width:100%;padding:0.5rem;">
+                                <option value="">Select Vehicle</option>
+                            </select>
+                        </div>
                     </div>
-                    <button id="confirmAssignBtn" class="btn btn-primary" style="align-self:flex-end;">Assign</button>
+                    <button id="confirmAssignBtn" class="btn btn-primary" style="align-self:flex-end;margin-top:1rem;">Assign</button>
                 `;
                 footer.parentNode.insertBefore(assignDiv, footer);
 
@@ -396,23 +435,50 @@ export async function showBookingDetailModal(booking, allUsers = []) {
                     opt.textContent = d.fullName;
                     driverSelect.appendChild(opt);
                 });
+                
                 const vehicleSelect = assignDiv.querySelector('#assignVehicleSelect');
-                vehicleList.forEach(v => {
+                // Filter to only show available vehicles
+                vehicleList.filter(v => v.isAvailable === true).forEach(v => {
                     const opt = document.createElement('option');
                     opt.value = v.id;
-                    opt.textContent = `${v.registrationNumber} (${v.model})`;
+                    opt.textContent = `${v.registrationNumber} (${v.model}) - ${v.assignedDriverId ? 'Assigned to Driver' : 'Unassigned'}`;
                     vehicleSelect.appendChild(opt);
+                });
+
+                // Auto-assign driver when vehicle is selected
+                vehicleSelect.addEventListener('change', () => {
+                    const selectedVehicleId = vehicleSelect.value;
+                    if (selectedVehicleId) {
+                        const vehicle = vehicleList.find(v => v.id === selectedVehicleId);
+                        if (vehicle && vehicle.assignedDriverId) {
+                            driverSelect.value = vehicle.assignedDriverId;
+                            driverSelect.disabled = true;
+                            driverSelect.style.opacity = '0.7';
+                            driverSelect.style.cursor = 'not-allowed';
+                        } else {
+                            driverSelect.disabled = false;
+                            driverSelect.style.opacity = '1';
+                            driverSelect.style.cursor = 'pointer';
+                            driverSelect.value = '';
+                        }
+                    } else {
+                        driverSelect.disabled = false;
+                        driverSelect.style.opacity = '1';
+                        driverSelect.style.cursor = 'pointer';
+                        driverSelect.value = '';
+                    }
                 });
 
                 assignDiv.querySelector('#confirmAssignBtn').addEventListener('click', async () => {
                     const driverId = driverSelect.value;
                     const vehicleId = vehicleSelect.value;
-                    if (!driverId || !vehicleId) {
-                        alert('Please select both a driver and a vehicle.');
+                    if (!vehicleId) {
+                        alert('Please select a vehicle.');
                         return;
                     }
                     try {
-                        await api.assignBooking({ bookingId: booking.id, driverId, vehicleId });
+                        // Send only vehicleId; backend will auto-assign driver if not specified
+                        await api.assignBooking({ bookingId: booking.id, driverId: driverId || undefined, vehicleId });
                         showToast('Booking assigned!', '#10b981');
                         closeModal();
                         notifyChange();

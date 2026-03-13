@@ -17,8 +17,8 @@ export async function showPaymentAndRatingModal(booking, sidebar, content, onCom
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
                                 </svg>
                             </div>
-                            <h2 style="margin: 0 0 0.5rem; color: var(--text-primary); font-size: 1.75rem; font-weight: 700;">Payment Successful! 💳</h2>
-                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.95rem;">Your booking has been confirmed</p>
+                            <h2 style="margin: 0 0 0.5rem; color: var(--text-primary); font-size: 1.75rem; font-weight: 700;">Booking Confirmed! 🎉</h2>
+                            <p style="margin: 0; color: var(--text-secondary); font-size: 0.95rem;">Your ride is scheduled. You can clear payment once the trip is completed.</p>
                         </div>
                     </div>
 

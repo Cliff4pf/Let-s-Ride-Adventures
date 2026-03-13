@@ -1,6 +1,7 @@
 import { auth } from "./firebase.js";
 import { onAuthStateChanged, signOut, getIdToken } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import api from "./api.js";
+import { handleLogout } from "./dashboard/logout-helper.js";
 
 import { renderTouristUI } from "./dashboard/tourist.js";
 import { renderDriverUI } from "./dashboard/driver.js";
@@ -104,16 +105,6 @@ async function initializeDashboard(role, profile) {
     // Attach logout event (fallback)
     const logoutBtn = document.getElementById('logoutBtn');
     if (logoutBtn) {
-        logoutBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            try {
-                await signOut(auth);
-                localStorage.removeItem('ridehub_token');
-                localStorage.removeItem('ridehub_role');
-                window.location.href = 'index.html';
-            } catch (error) {
-                console.error("Logout error", error);
-            }
-        });
+        logoutBtn.addEventListener('click', handleLogout);
     }
 }

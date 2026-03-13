@@ -43,14 +43,18 @@ export async function openProfileModal() {
         const modal = document.createElement('div');
         modal.id = 'profileModal';
         modal.className = 'modal-overlay';
+        modal.style.opacity = '0';
+        modal.style.transition = 'opacity 0.3s ease';
         modal.innerHTML = modalHtml;
         document.body.appendChild(modal);
 
         // Attach event listeners
         attachProfileModalEvents(modal, profile);
 
-        // Show modal
-        modal.style.display = 'flex';
+        // Show modal with fade-in
+        setTimeout(() => {
+            modal.style.opacity = '1';
+        }, 10);
     } catch (error) {
         console.error('Profile modal error:', error);
         showToast('Failed to load profile', '#ef4444');
@@ -160,9 +164,29 @@ function attachProfileModalEvents(modal, originalProfile) {
     const saveBtn = modal.querySelector('#profileSaveBtn');
 
     const closeModal = () => {
-        modal.style.display = 'none';
-        setTimeout(() => modal.remove(), 300);
+        modal.style.opacity = '0';
+        setTimeout(() => {
+            modal.remove();
+        }, 300);
     };
+
+    // Ensure close button is found and attach listener
+    if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            closeModal();
+        });
+    }
+
+    // Also handle cancel and overlay clicks
+    if (cancelBtn) {
+        cancelBtn.addEventListener('click', closeModal);
+    }
+
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
 
     // Helper function to check if any changes were made
     const checkForChanges = () => {
@@ -220,20 +244,19 @@ function attachProfileModalEvents(modal, originalProfile) {
         input.addEventListener('change', updateSaveButtonState);
     });
 
-    closeBtn.addEventListener('click', closeModal);
-    cancelBtn.addEventListener('click', closeModal);
-
     // Hover effects for cancel button
-    cancelBtn.addEventListener('mouseenter', () => {
-        cancelBtn.style.background = 'var(--surface-hover)';
-        cancelBtn.style.borderColor = 'var(--primary-color)';
-        cancelBtn.style.color = 'var(--primary-color)';
-    });
-    cancelBtn.addEventListener('mouseleave', () => {
-        cancelBtn.style.background = 'transparent';
-        cancelBtn.style.borderColor = 'var(--border-color)';
-        cancelBtn.style.color = 'var(--text-primary)';
-    });
+    if (cancelBtn) {
+        cancelBtn.addEventListener('mouseenter', () => {
+            cancelBtn.style.background = 'var(--surface-hover)';
+            cancelBtn.style.borderColor = 'var(--primary-color)';
+            cancelBtn.style.color = 'var(--primary-color)';
+        });
+        cancelBtn.addEventListener('mouseleave', () => {
+            cancelBtn.style.background = 'transparent';
+            cancelBtn.style.borderColor = 'var(--border-color)';
+            cancelBtn.style.color = 'var(--text-primary)';
+        });
+    }
 
     // Hover effects for save button
     const updateSaveButtonHover = () => {

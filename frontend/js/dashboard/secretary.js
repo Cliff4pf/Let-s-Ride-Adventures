@@ -1,6 +1,6 @@
 import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
-import { attachLogoutListener } from "./logout-helper.js";
+import { attachLogoutListener, handleLogout } from "./logout-helper.js";
 import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
 import { showBookingDetailModal } from "./booking-detail-modal.js";
 
@@ -76,18 +76,7 @@ function setupMenuBarEvents() {
         });
     }
 
-    // Logout button in settings
-    if (logoutSettingBtn) {
-        logoutSettingBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            const { signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
-            const { auth } = await import('./firebase.js');
-            await signOut(auth);
-            localStorage.removeItem('ridehub_token');
-            localStorage.removeItem('ridehub_role');
-            window.location.href = 'index.html';
-        });
-    }
+    // Logout button in settings is wired automatically via logout-helper
 
     // Notifications button - show booking notifications
     if (notificationBtn) {
@@ -408,18 +397,18 @@ async function renderDispatcherDashboard(content) {
 
             tableHtml += approvedBookings.map(b => {
                 const driverOptions = activeDrivers.map(d => `<option value="${d.uid}">${d.fullName}</option>`).join('');
-                const vehicleOptions = availableVehicles.map(v => `<option value="${v.id}">${v.registrationNumber} (${v.model})</option>`).join('');
+                const vehicleOptions = availableVehicles.map(v => `<option value="${v.id}" data-driver-id="${v.assignedDriverId || ''}">${v.registrationNumber} (${v.model}) - ${v.assignedDriverId ? 'Auto Assigned' : 'Unassigned'}</option>`).join('');
                 return `
                 <tr class="booking-row" data-booking='${JSON.stringify(b)}' style="cursor:pointer;">
                     <td>${new Date(b.startDate).toLocaleDateString()}</td>
                     <td>${b.destination || '-'}</td>
                     <td><span class="badge badge-approved">APPROVED</span></td>
                     <td style="display:flex;gap:0.5rem;">
-                        <select class="form-control" id="dsel-${b.id}" style="font-size:0.75rem;padding:0.25rem;">
+                        <select class="form-control driver-select" id="dsel-${b.id}" style="font-size:0.75rem;padding:0.25rem;">
                             <option value="">Select Driver</option>
                             ${driverOptions}
                         </select>
-                        <select class="form-control" id="vsel-${b.id}" style="font-size:0.75rem;padding:0.25rem;">
+                        <select class="form-control vehicle-select" id="vsel-${b.id}" style="font-size:0.75rem;padding:0.25rem;" data-driver-select-id="dsel-${b.id}">
                             <option value="">Select Vehicle</option>
                             ${vehicleOptions}
                         </select>
@@ -514,19 +503,41 @@ async function renderDispatcherDashboard(content) {
             });
         });
 
+        content.querySelectorAll('.vehicle-select').forEach(vehicleSelect => {
+            vehicleSelect.addEventListener('change', () => {
+                const driverSelectId = vehicleSelect.getAttribute('data-driver-select-id');
+                const driverSelect = document.getElementById(driverSelectId);
+                const selectedOption = vehicleSelect.options[vehicleSelect.selectedIndex];
+                const assignedDriverId = selectedOption.getAttribute('data-driver-id');
+                
+                if (assignedDriverId) {
+                    driverSelect.value = assignedDriverId;
+                    driverSelect.disabled = true;
+                    driverSelect.style.opacity = '0.7';
+                    driverSelect.style.cursor = 'not-allowed';
+                } else {
+                    driverSelect.disabled = false;
+                    driverSelect.style.opacity = '1';
+                    driverSelect.style.cursor = 'pointer';
+                    driverSelect.value = '';
+                }
+            });
+        });
+
         content.querySelectorAll('.assign-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 const id = e.target.getAttribute('data-id');
                 const driverId = document.getElementById(`dsel-${id}`).value;
                 const vehicleId = document.getElementById(`vsel-${id}`).value;
 
-                if (!driverId || !vehicleId) {
-                    alert('Please select both a driver and a vehicle.');
+                if (!vehicleId) {
+                    alert('Please select a vehicle.');
                     return;
                 }
 
                 try {
-                    await api.assignBooking({ bookingId: id, driverId, vehicleId });
+                    // Send driverId if selected; backend will auto-assign from vehicle if not provided
+                    await api.assignBooking({ bookingId: id, driverId: driverId || undefined, vehicleId });
                     alert('Assignment locked successfully!');
                     renderDispatcherDashboard(content);
                 } catch (err) {
@@ -558,7 +569,7 @@ async function renderUpdateBookingsView(content) {
             tableHtml = `<tr><td colspan="6" style="text-align:center;">No bookings available for update.</td></tr>`;
         } else {
             tableHtml = updateableBookings.map(b => `
-                <tr class="booking-row" data-booking-id="${b.id}" style="cursor: pointer; transition: background-color 0.2s ease;" data-booking='${JSON.stringify(b)}'>
+                <tr class="booking-row" style="transition: background-color 0.2s ease;">
                     <td>${new Date(b.startDate).toLocaleDateString()}</td>
                     <td>${b.pickupLocation || '-'}</td>
                     <td>${b.destination || '-'}</td>
@@ -745,28 +756,7 @@ async function renderUpdateBookingsView(content) {
             row.addEventListener('mouseleave', () => {
                 row.style.backgroundColor = 'transparent';
             });
-            row.addEventListener('click', (e) => {
-                // Don't open modal if clicking on a button
-                if (e.target.closest('button')) return;
-                
-                const bookingData = row.getAttribute('data-booking');
-                if (bookingData) {
-                    try {
-                        const booking = JSON.parse(bookingData);
-                        // Fetch all users for the modal
-                        api.getAllUsers().then(res => {
-                            if (res.ok) {
-                                res.json().then(userData => {
-                                    const users = userData.data || userData || [];
-                                    showBookingDetailModal(booking, users);
-                                });
-                            }
-                        }).catch(err => console.error('Error fetching users:', err));
-                    } catch (err) {
-                        console.error('Error parsing booking data:', err);
-                    }
-                }
-            });
+            // Removed row click handler to prevent popup modal
         });
 
     } catch (e) {

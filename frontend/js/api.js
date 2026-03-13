@@ -50,6 +50,10 @@ const api = {
         return this.fetchWithAuth('/User');
     },
 
+    getUser: async function (userId) {
+        return this.fetchWithAuth(`/User/${userId}`);
+    },
+
     promoteUser: async function (userId, role) {
         return this.fetchWithAuth(`/User/${userId}/promote`, {
             method: 'PATCH',
@@ -119,6 +123,31 @@ const api = {
         return this.fetchWithAuth(`/Booking/${bookingId}/update-status`, {
             method: 'PUT',
             body: JSON.stringify({ status })
+        });
+    },
+
+    // driver actions
+    acceptTrip: async function (bookingId) {
+        return this.fetchWithAuth(`/Booking/${bookingId}/accept`, {
+            method: 'PATCH'
+        });
+    },
+
+    declineTrip: async function (bookingId) {
+        return this.fetchWithAuth(`/Booking/${bookingId}/decline`, {
+            method: 'PATCH'
+        });
+    },
+
+    startTrip: async function (bookingId) {
+        return this.fetchWithAuth(`/Booking/${bookingId}/start`, {
+            method: 'PATCH'
+        });
+    },
+
+    completeTrip: async function (bookingId) {
+        return this.fetchWithAuth(`/Booking/${bookingId}/complete`, {
+            method: 'PATCH'
         });
     },
 
@@ -208,6 +237,10 @@ const api = {
         return this.fetchWithAuth('/Feedback');
     },
 
+    getAnalyticsDashboard: async function () {
+        return this.fetchWithAuth('/Analytics/dashboard');
+    },
+
     getFeedbackByBooking: async function (bookingId) {
         return this.fetchWithAuth(`/Feedback/booking/${bookingId}`);
     },
@@ -235,6 +268,25 @@ const api = {
         return this.fetchWithAuth(`/Feedback/${feedbackId}`, {
             method: 'DELETE'
         });
+    },
+
+    // --- Notifications API ---
+    getNotifications: async function () {
+        // use direct fetch to avoid auto-logout on auth errors
+        const token = this.getToken();
+        try {
+            const response = await fetch(`${API_BASE_URL}/Notification`, {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            return response; // return raw response, don't auto-logout on 401
+        } catch (error) {
+            console.error('Notification fetch failed:', error);
+            throw error;
+        }
     },
 
     // --- Messaging API ---

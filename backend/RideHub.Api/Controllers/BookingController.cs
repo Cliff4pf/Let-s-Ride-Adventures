@@ -186,9 +186,6 @@ namespace RideHub.Api.Controllers
             var booking = await _firestoreService.GetBookingAsync(dto.BookingId);
             if (booking == null) return NotFound(ApiResponse.Error("Booking not found."));
 
-            var driver = await _firestoreService.GetUserAsync(dto.DriverId);
-            if (driver == null) return NotFound(ApiResponse.Error("Driver not found."));
-
             var vehicle = await _firestoreService.GetVehicleAsync(dto.VehicleId);
             if (vehicle == null) return NotFound(ApiResponse.Error("Vehicle not found."));
 
@@ -198,13 +195,24 @@ namespace RideHub.Api.Controllers
                 return BadRequest(ApiResponse.Error("Vehicle is not available."));
             }
 
+            // Determine driver ID: use provided DriverId or auto-assign from vehicle's AssignedDriverId
+            string driverId = !string.IsNullOrEmpty(dto.DriverId) ? dto.DriverId : vehicle.AssignedDriverId;
+            
+            if (string.IsNullOrEmpty(driverId))
+            {
+                return BadRequest(ApiResponse.Error("No driver specified and vehicle has no assigned driver."));
+            }
+
+            var driver = await _firestoreService.GetUserAsync(driverId);
+            if (driver == null) return NotFound(ApiResponse.Error("Driver not found."));
+
             // Check if driver is active
             if (driver.Status != "Active")
             {
                 return BadRequest(ApiResponse.Error("Driver is not active."));
             }
 
-            booking.AssignedDriverId = dto.DriverId;
+            booking.AssignedDriverId = driverId;
             booking.VehicleId = dto.VehicleId;
             booking.Status = "ASSIGNED";
             booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
@@ -333,6 +341,35 @@ namespace RideHub.Api.Controllers
                     "RideHub Booking Cancelled",
                     $"Your booking to {booking.Destination} has been cancelled."
                 );
+
+                // Create in-app notification for tourist
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = tourist.Uid,
+                    Title = "Booking Cancelled",
+                    Message = $"Your booking to {booking.Destination} has been cancelled.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            // If driver was assigned, notify them as well
+            if (!string.IsNullOrEmpty(booking.AssignedDriverId))
+            {
+                var driver = await _firestoreService.GetUserAsync(booking.AssignedDriverId);
+                if (driver != null)
+                {
+                    await _firestoreService.CreateNotificationAsync(new Models.Notification
+                    {
+                        UserId = driver.Uid,
+                        Title = "Trip Cancelled",
+                        Message = $"Your assigned trip to {booking.Destination} has been cancelled. The booking is now available for reassignment.",
+                        Type = "SYSTEM",
+                        IsRead = false,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
             }
 
             return Ok(new { message = "Booking cancelled" });
@@ -345,6 +382,19 @@ namespace RideHub.Api.Controllers
         {
             var booking = await _firestoreService.GetBookingAsync(id);
             if (booking == null) return NotFound(new { message = "Booking not found." });
+
+            // only the assigned driver may start and only after they have accepted
+            var profile = await GetCurrentUserProfileAsync();
+            if (profile == null) return Unauthorized();
+            if (booking.AssignedDriverId != profile.Uid)
+            {
+                return Forbid();
+            }
+
+            if (booking.Status != "ACCEPTED")
+            {
+                return BadRequest(ApiResponse.Error("Trip must be accepted before starting."));
+            }
 
             booking.Status = "IN_PROGRESS";
             booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
@@ -362,6 +412,41 @@ namespace RideHub.Api.Controllers
                 }
             }
 
+            // notify tourist the driver has started the journey
+            var tourist = await _firestoreService.GetUserAsync(booking.UserId);
+            if (tourist != null)
+            {
+                await _emailService.SendEmail(
+                    tourist.Email,
+                    "RideHub Trip In Progress",
+                    $"Your trip to {booking.Destination} is now in progress with driver {profile.FullName}."
+                );
+
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = tourist.Uid,
+                    Title = "Trip In Progress",
+                    Message = $"Your trip to {booking.Destination} has started. Sit back and relax!",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            // Create notification for driver
+            if (profile != null)
+            {
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = profile.Uid,
+                    Title = "Trip Started",
+                    Message = $"Your trip to {booking.Destination} is now in progress.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
             return Ok(new { message = "Trip started" });
         }
 
@@ -373,6 +458,18 @@ namespace RideHub.Api.Controllers
             var booking = await _firestoreService.GetBookingAsync(id);
             if (booking == null) return NotFound(new { message = "Booking not found." });
 
+            var profile = await GetCurrentUserProfileAsync();
+            if (profile == null) return Unauthorized();
+            if (booking.AssignedDriverId != profile.Uid)
+            {
+                return Forbid();
+            }
+
+            if (booking.Status != "IN_PROGRESS")
+            {
+                return BadRequest(ApiResponse.Error("Trip must be in progress before it can be completed."));
+            }
+
             double commission = booking.Price * 0.15;
 
             var driver = await _firestoreService.GetUserAsync(booking.AssignedDriverId ?? string.Empty);
@@ -382,7 +479,9 @@ namespace RideHub.Api.Controllers
                 await _firestoreService.UpdateUserAsync(driver);
             }
 
+            // mark completion time so history sorting works correctly
             booking.Status = "COMPLETED";
+            booking.EndDate = DateTime.UtcNow;
             booking.CommissionCalculated = true;
             booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
             await _firestoreService.UpdateBookingAsync(booking);
@@ -403,16 +502,44 @@ namespace RideHub.Api.Controllers
             var tourist = await _firestoreService.GetUserAsync(booking.UserId);
             if (tourist != null)
             {
-                await _emailService.SendEmail(
-                    tourist.Email,
-                    "RideHub Trip Completed",
-                    $"Your trip to {booking.Destination} has been completed. Thank you for riding with RideHub!\n\n" +
-                    $"Trip Details:\n" +
-                    $"Pickup: {booking.PickupLocation}\n" +
-                    $"Destination: {booking.Destination}\n" +
-                    $"Amount Paid: KSH {booking.Price:N2}\n\n" +
-                    $"Please rate your experience and share feedback at your earliest convenience."
-                );
+                // send payment request email if still unpaid
+                string subject = "RideHub Trip Completed";
+                string message = $"Your trip to {booking.Destination} has been completed.\n\n" +
+                                 $"Pickup: {booking.PickupLocation}\n" +
+                                 $"Destination: {booking.Destination}\n" +
+                                 $"Amount Due: KSH {booking.Price:N2}\n\n";
+                if (booking.PaymentStatus != "PAID")
+                {
+                    message += "Please settle your payment through the app so the trip can appear in your history and for the driver to receive earnings.\n";
+                }
+                message += "Thank you for riding with RideHub!\nPlease rate your experience and share feedback at your earliest convenience.";
+
+                await _emailService.SendEmail(tourist.Email, subject, message);
+
+                // create an in‑app notification so the tourist can be prompted immediately
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = tourist.Uid,
+                    Title = "Trip Completed – Payment Due",
+                    Message = $"Your trip to {booking.Destination} finished. Please pay KSH {booking.Price:N2} using the dashboard.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            // Create notification for driver confirming trip completion and commission
+            if (profile != null)
+            {
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = profile.Uid,
+                    Title = "Trip Completed",
+                    Message = $"Your trip to {booking.Destination} has been completed. Commission of KSH {(booking.Price * 0.15):N2} has been added to your account.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
             }
 
             return Ok(new { message = "Trip completed & commission added" });
@@ -420,12 +547,12 @@ namespace RideHub.Api.Controllers
 
         // PATCH: api/booking/{id}/payment
         [HttpPatch("{id}/payment")]
-        public async Task<IActionResult> MarkAsPaid(string id)
+        public async Task<IActionResult> MarkAsPaid(string id, [FromBody] UpdatePaymentStatusDTO dto)
         {
             var booking = await _firestoreService.GetBookingAsync(id);
             if (booking == null) return NotFound(new { message = "Booking not found." });
             
-            booking.PaymentStatus = "PAID";
+            booking.PaymentStatus = dto.PaymentStatus;
             booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
             
             await _firestoreService.UpdateBookingAsync(booking);
@@ -436,12 +563,167 @@ namespace RideHub.Api.Controllers
                 await _emailService.SendEmail(
                     tourist.Email,
                     "RideHub Payment Received",
-                    $"We have received your payment for the trip to {booking.Destination}. Thank you!"
+                    $"We have received your payment for the trip to {booking.Destination}. Your booking will now appear in your history. Thank you!"
                 );
+
+                // notify tourist about successful payment
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = tourist.Uid,
+                    Title = "Payment Confirmed",
+                    Message = $"Your payment of KSH {booking.Price:N2} for the trip to {booking.Destination} has been received.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            // also notify the driver that the fare has been paid (use assigned driver id if available)
+            if (!string.IsNullOrEmpty(booking.AssignedDriverId))
+            {
+                var driver = await _firestoreService.GetUserAsync(booking.AssignedDriverId);
+                if (driver != null)
+                {
+                    await _firestoreService.CreateNotificationAsync(new Models.Notification
+                    {
+                        UserId = driver.Uid,
+                        Title = "Trip Paid",
+                        Message = $"The passenger has settled the payment (KSH {booking.Price:N2}) for the trip to {booking.Destination}.",
+                        Type = "SYSTEM",
+                        IsRead = false,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
             }
 
             return Ok(new { message = "Payment successful" });
         }
+        // ... existing administrative endpoints remain unchanged
+        
+        // DRIVER ACTIONS
+
+        // PATCH: api/booking/{id}/accept (Driver)
+        [RoleAuthorize("Driver")]
+        [HttpPatch("{id}/accept")]
+        public async Task<IActionResult> AcceptTrip(string id)
+        {
+            var booking = await _firestoreService.GetBookingAsync(id);
+            if (booking == null) return NotFound(ApiResponse.Error("Booking not found."));
+
+            var profile = await GetCurrentUserProfileAsync();
+            if (profile == null) return Unauthorized(ApiResponse.Error("Unauthorized"));
+            if (booking.AssignedDriverId != profile.Uid)
+            {
+                return Forbid();
+            }
+
+            if (booking.Status != "ASSIGNED")
+            {
+                return BadRequest(ApiResponse.Error("Only assigned trips can be accepted."));
+            }
+
+            booking.Status = "ACCEPTED";
+            booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
+            await _firestoreService.UpdateBookingAsync(booking);
+
+            // notify tourist driver has accepted (optional)
+            var tourist = await _firestoreService.GetUserAsync(booking.UserId);
+            if (tourist != null)
+            {
+                await _emailService.SendEmail(
+                    tourist.Email,
+                    "RideHub Driver Accepted Your Trip",
+                    $"Your driver has accepted the trip to {booking.Destination}. Please be ready at the pickup location."
+                );
+
+                // Create in-app notification for tourist
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = tourist.Uid,
+                    Title = "Trip Accepted",
+                    Message = $"Your driver ({profile.FullName ?? "Your Driver"}) has accepted the trip to {booking.Destination}. Please be ready at the pickup location.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            // Create notification for driver confirming acceptance
+            if (profile != null)
+            {
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = profile.Uid,
+                    Title = "Trip Accepted",
+                    Message = $"You have accepted the trip to {booking.Destination}. Get ready to start when the passenger arrives.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            return Ok(new { message = "Trip accepted" });
+        }
+
+        // PATCH: api/booking/{id}/decline (Driver)
+        [RoleAuthorize("Driver")]
+        [HttpPatch("{id}/decline")]
+        public async Task<IActionResult> DeclineTrip(string id)
+        {
+            var booking = await _firestoreService.GetBookingAsync(id);
+            if (booking == null) return NotFound(ApiResponse.Error("Booking not found."));
+
+            var profile = await GetCurrentUserProfileAsync();
+            if (profile == null) return Unauthorized(ApiResponse.Error("Unauthorized"));
+            if (booking.AssignedDriverId != profile.Uid)
+            {
+                return Forbid();
+            }
+
+            // reset status so an admin/secretary can reassign
+            booking.Status = "APPROVED";
+            booking.UpdatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp();
+            await _firestoreService.UpdateBookingAsync(booking);
+
+            // notify tourist driver declined (optional)
+            var tourist = await _firestoreService.GetUserAsync(booking.UserId);
+            if (tourist != null)
+            {
+                await _emailService.SendEmail(
+                    tourist.Email,
+                    "RideHub Driver Declined Your Trip",
+                    $"The previously assigned driver was unable to accept your trip to {booking.Destination}. We will reassign a new driver shortly."
+                );
+
+                // Create in-app notification for tourist
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = tourist.Uid,
+                    Title = "Trip Declined",
+                    Message = $"Your assigned driver has declined the trip to {booking.Destination}. We will reassign another driver shortly.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            // Create notification for driver confirming the decline
+            if (profile != null)
+            {
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = profile.Uid,
+                    Title = "Trip Declined - Confirmed",
+                    Message = $"You have successfully declined the trip to {booking.Destination}. It will be reassigned to another driver.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
+            }
+
+            return Ok(new { message = "Trip declined" });
+        }
+
         // PUT: api/booking/{id} (Admin/Secretary only - Update booking details)
         [RoleAuthorize("Admin", "Secretary")]
         [HttpPut("{id}")]

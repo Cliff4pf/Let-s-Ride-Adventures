@@ -1,11 +1,17 @@
 import api from "../api.js";
-import { icons, createNavItem } from "./shared.js";
-import { attachLogoutListener } from "./logout-helper.js";
+import { icons, createNavItem, showToast } from "./shared.js";
+import { attachLogoutListener, handleLogout } from "./logout-helper.js";
 import { initializeProfileModal } from "./profile-modal.js";
+import { showTripDetailsModal, ensureGetUserAPI } from "./trip-details-modal.js";
+import { showBillingModal } from "./billing-modal.js";
 
 let driverState = {
-    activeTab: 'trips' // 'trips', 'schedule', 'history'
+    activeTab: 'trips', // 'trips', 'schedule', 'history'
+    currentUserId: null
 };
+
+// Ensure API has getUser method
+ensureGetUserAPI();
 
 // Setup menu bar events (settings dropdown, notifications, messages)
 function setupMenuBarEvents() {
@@ -77,18 +83,7 @@ function setupMenuBarEvents() {
         });
     }
 
-    // Logout button in settings
-    if (logoutSettingBtn) {
-        logoutSettingBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            const { signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
-            const { auth } = await import('../firebase.js');
-            await signOut(auth);
-            localStorage.removeItem('ridehub_token');
-            localStorage.removeItem('ridehub_role');
-            window.location.href = 'index.html';
-        });
-    }
+    // Logout button in settings is wired automatically via logout-helper
 
     // Notifications button - show trip notifications
     if (notificationBtn) {
@@ -105,17 +100,38 @@ function setupMenuBarEvents() {
             showDriverNotifications();
         });
     }
+
+    // update badge once initially
+    updateNotificationBadge();
+}
+
+// Update notification badge for drivers (assigned trips count)
+function updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    if (!badge) return;
+    // fetch bookings and count ASSIGNED for this driver
+    api.getBookings()
+        .then(res => res.ok ? res.json() : Promise.reject(`status ${res.status}`))
+        .then(bookings => {
+            const uid = localStorage.getItem('uid');
+            const count = bookings.filter(b => b.assignedDriverId === uid && b.status === 'ASSIGNED').length;
+            badge.textContent = count > 0 ? count : '';
+            badge.style.display = count > 0 ? 'inline-block' : 'none';
+        })
+        .catch(err => {
+            console.warn('Could not update notification badge:', err);
+        });
 }
 
 // Show driver notifications (assigned trips)
 async function showDriverNotifications() {
     try {
         const bookingsRes = await api.getBookings();
+        if (!bookingsRes.ok) {
+            throw new Error(`Failed to fetch bookings: ${bookingsRes.status}`);
+        }
         const bookings = await bookingsRes.json();
-        const usersRes = await api.getAllUsers();
-        const usersData = await usersRes.json();
-        const allUsers = usersData.data || usersData || [];
-        
+
         // Get driver's newly assigned trips (ASSIGNED status = just assigned, not started yet)
         const assignedTrips = bookings.filter(b => b.assignedDriverId && b.status === 'ASSIGNED');
 
@@ -138,6 +154,30 @@ async function showDriverNotifications() {
             return;
         }
 
+        // Build a cache of user info to avoid repeated API calls
+        const userCache = {};
+        const getUserInfo = async (uid) => {
+            if (!uid) return null;
+            if (userCache[uid]) return userCache[uid];
+            try {
+                const res = await api.getUser(uid);
+                if (res.ok) {
+                    const data = await res.json();
+                    userCache[uid] = data.data || data;
+                    return userCache[uid];
+                }
+            } catch (err) {
+                console.warn(`Unable to fetch user ${uid}:`, err);
+            }
+            return null;
+        };
+
+        // Enrich trips with tourist info
+        const assignedWithTourists = await Promise.all(assignedTrips.map(async b => {
+            const tourist = await getUserInfo(b.userId);
+            return { ...b, tourist };
+        }));
+
         // Create notification modal with contact details and actions
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
@@ -149,14 +189,14 @@ async function showDriverNotifications() {
                 <div class="modal-header" style="border-bottom: 2px solid var(--border-color); padding: 1.5rem;">
                     <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
                         🔔 New Trip Assignments
-                        <span style="background: #3b82f6; color: white; font-size: 0.75rem; padding: 0.25rem 0.75rem; border-radius: 999px; font-weight: bold;">${assignedTrips.length}</span>
+                        <span style="background: #3b82f6; color: white; font-size: 0.75rem; padding: 0.25rem 0.75rem; border-radius: 999px; font-weight: bold;">${assignedWithTourists.length}</span>
                     </h3>
                     <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">×</button>
                 </div>
                 
                 <div style="flex: 1; overflow-y: auto; padding: 1rem;">
-                    ${assignedTrips.map((b, idx) => {
-                        const tourist = allUsers.find(u => u.uid === b.userId);
+                    ${assignedWithTourists.map((b, idx) => {
+                        const tourist = b.tourist;
                         const vehicle = b.vehicleId ? `Vehicle assigned: ${b.vehicleId}` : 'No vehicle info';
                         const startTime = new Date(b.startDate);
                         const timeStr = startTime.toLocaleString();
@@ -289,6 +329,21 @@ async function showDriverNotifications() {
             }
         });
 
+        // make assignment cards clickable to view details
+        modal.querySelectorAll('.assignment-card').forEach(card => {
+            card.style.cursor = 'pointer';
+            card.addEventListener('click', () => {
+                const bookingId = card.getAttribute('data-booking-id');
+                if (bookingId) {
+                    const booking = assignedWithTourists.find(b => b.id === bookingId);
+                    if (booking) {
+                        showTripDetailsModal(booking, 'driver');
+                        modal.remove();
+                    }
+                }
+            });
+        });
+
         // Accept trip handlers
         modal.querySelectorAll('.btn-accept-trip').forEach(btn => {
             btn.addEventListener('click', async (e) => {
@@ -297,18 +352,19 @@ async function showDriverNotifications() {
                 btn.textContent = '⟳ Processing...';
                 
                 try {
-                    await api.updateBookingStatus(bookingId, 'IN_PROGRESS');
+                    await api.acceptTrip(bookingId);
                     btn.textContent = '✓ Accepted';
                     btn.style.background = '#059669';
                     
                     setTimeout(() => {
                         modal.remove();
-                        alert('Trip accepted! You may now begin the journey.');
+                        alert('Trip accepted! You may start the journey when ready.');
                         // Refresh trips view
                         const content = document.querySelector('.main-content');
                         if (content) {
                             renderTripsView(content);
                         }
+                        updateNotificationBadge();
                     }, 500);
                 } catch (error) {
                     console.error('Failed to accept trip:', error);
@@ -332,8 +388,7 @@ async function showDriverNotifications() {
                 btn.textContent = '⟳ Processing...';
                 
                 try {
-                    // Set status back to APPROVED so admin can reassign
-                    await api.updateBookingStatus(bookingId, 'APPROVED');
+                    await api.declineTrip(bookingId);
                     btn.textContent = '✗ Declined';
                     btn.style.background = '#991b1b';
                     
@@ -345,6 +400,7 @@ async function showDriverNotifications() {
                         if (content) {
                             renderTripsView(content);
                         }
+                        updateNotificationBadge();
                     }, 500);
                 } catch (error) {
                     console.error('Failed to decline trip:', error);
@@ -426,12 +482,11 @@ async function renderTripsView(content) {
             };
         } catch (err) { console.error("Could not fetch earnings: ", err.message); }
 
-        const activeTrip = myBookings.find(b => b.status === "ASSIGNED" || b.status === "IN_PROGRESS");
+        const activeTrip = myBookings.find(b => b.status === "ACCEPTED" || b.status === "IN_PROGRESS");
+        const assignedOnly = myBookings.find(b => b.status === "ASSIGNED");
 
         let activeHtml = '';
-        if (!activeTrip) {
-            activeHtml = `<div style="padding: 2rem; text-align: center; color: var(--text-secondary); background: #f9f9f9; border-radius: 8px;">No active assignments. Grab a coffee!</div>`;
-        } else {
+        if (activeTrip) {
             activeHtml = `
             <div style="background: white; border: 1px solid var(--border-color); border-radius: 12px; padding: 1.5rem; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                 <div>
@@ -440,13 +495,27 @@ async function renderTripsView(content) {
                     <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 0.5rem;"><span class="badge badge-${activeTrip.status.toLowerCase()}">${activeTrip.status}</span></p>
                 </div>
                 <div>
-                    ${activeTrip.status === 'ASSIGNED' ?
+                    ${activeTrip.status === 'ACCEPTED' ?
                     `<button class="btn btn-primary start-trip-btn" data-id="${activeTrip.id}">Start Trip</button>` :
                     `<button class="btn btn-primary finish-trip-btn" data-id="${activeTrip.id}" style="background: #10b981; border-color: #10b981;">Complete Trip</button>`
                 }
                 </div>
             </div>
             `;
+        } else if (assignedOnly) {
+            // show accept/decline card when there's an assigned trip but it hasn't been accepted
+            activeHtml = `
+            <div style="background: white; border: 1px solid var(--border-color); border-radius: 12px; padding: 1.5rem; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                <h3 style="margin-bottom: 0.5rem; color: var(--text-primary);">New Assignment: ${assignedOnly.destination || ''}</h3>
+                <p style="color: var(--text-secondary); font-size: 0.875rem;">Scheduled: ${new Date(assignedOnly.startDate).toLocaleString()}</p>
+                <div style="margin-top: 1rem; display: flex; gap: 1rem;">
+                    <button class="btn btn-success accept-trip-inline" data-id="${assignedOnly.id}">Accept</button>
+                    <button class="btn btn-danger decline-trip-inline" data-id="${assignedOnly.id}">Decline</button>
+                </div>
+            </div>
+            `;
+        } else {
+            activeHtml = `<div style="padding: 2rem; text-align: center; color: var(--text-secondary); background: #f9f9f9; border-radius: 8px;">No active assignments. Grab a coffee!</div>`;
         }
 
         content.innerHTML = `
@@ -476,19 +545,74 @@ async function renderTripsView(content) {
             startBtn.addEventListener('click', async (e) => {
                 const id = e.target.getAttribute('data-id');
                 if (confirm('Start this trip?')) {
-                    await api.updateBookingStatus(id, "IN_PROGRESS");
-                    renderTripsView(content);
+                    try {
+                        await api.startTrip(id);
+                        showToast('Trip is now in progress', '#3b82f6');
+                        renderTripsView(content);
+                    } catch (err) {
+                        console.error('Error starting trip:', err);
+                        showToast('Unable to start trip', '#ef4444');
+                    }
                 }
             });
         }
+
+        // handlers for inline accept/decline when shown in the main card
+        content.querySelectorAll('.accept-trip-inline').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = btn.getAttribute('data-id');
+                try {
+                    await api.acceptTrip(id);
+                    showToast('Trip accepted! You can now start when ready.', '#10b981');
+                    renderTripsView(content);
+                } catch (err) {
+                    console.error('Error accepting trip inline:', err);
+                    showToast('Failed to accept trip', '#ef4444');
+                }
+            });
+        });
+
+        content.querySelectorAll('.decline-trip-inline').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = btn.getAttribute('data-id');
+                if (!confirm('Decline this trip?')) return;
+                try {
+                    await api.declineTrip(id);
+                    showToast('Trip declined.', '#ef4444');
+                    renderTripsView(content);
+                } catch (err) {
+                    console.error('Error declining trip inline:', err);
+                    showToast('Failed to decline trip', '#ef4444');
+                }
+            });
+        });
 
         const finishBtn = content.querySelector('.finish-trip-btn');
         if (finishBtn) {
             finishBtn.addEventListener('click', async (e) => {
                 const id = e.target.getAttribute('data-id');
-                if (confirm('Mark this trip as completed?')) {
-                    await api.updateBookingStatus(id, "COMPLETED");
-                    renderTripsView(content);
+                const trip = myBookings.find(b => b.id === id);
+                
+                if (!trip) return;
+
+                if (!confirm('Mark this trip as completed?')) return;
+
+                try {
+                    // Update trip status to COMPLETED via dedicated endpoint
+                    await api.completeTrip(id);
+                    showToast('Trip marked as completed!', '#10b981');
+                    
+                    // Show billing modal for tourist (will prompt payment if unpaid)
+                    showBillingModal(trip, async (completedTrip) => {
+                        // After payment, refresh view
+                        setTimeout(() => {
+                            renderTripsView(content);
+                        }, 1000);
+                    });
+                    
+                } catch (error) {
+                    console.error('Error completing trip:', error);
+                    showToast('Failed to complete trip', '#ef4444');
                 }
             });
         }
@@ -506,9 +630,9 @@ async function renderScheduleView(content) {
         const res = await api.getBookings();
         const allBookings = await res.json();
 
-        // Filter for upcoming and in-progress trips
+        // Filter for upcoming and in-progress trips (include accepted)
         const upcomingTrips = allBookings.filter(b =>
-            (b.status === "ASSIGNED" || b.status === "IN_PROGRESS") && new Date(b.startDate) > new Date()
+            (b.status === "ASSIGNED" || b.status === "ACCEPTED" || b.status === "IN_PROGRESS") && new Date(b.startDate) > new Date()
         ).sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
 
         const activeTrip = allBookings.find(b => b.status === "IN_PROGRESS");
@@ -530,7 +654,7 @@ async function renderScheduleView(content) {
                 const borderColor = isActive ? '#10b981' : '#e5e7eb';
 
                 return `
-                    <div style="background: ${bgColor}; border: 2px solid ${borderColor}; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem;">
+                    <div class="trip-card" data-trip-id="${trip.id}" style="background: ${bgColor}; border: 2px solid ${borderColor}; border-radius: 12px; padding: 1.5rem; margin-bottom: 1rem; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
                         <div style="display: flex; justify-content: space-between; align-items: start;">
                             <div style="flex: 1;">
                                 <div style="font-size: 0.875rem; color: #6b7280; text-transform: uppercase; font-weight: 600; margin-bottom: 0.5rem;">
@@ -543,6 +667,7 @@ async function renderScheduleView(content) {
                                     Guests: ${trip.numberOfGuests} | Type: ${trip.bookingType}
                                 </p>
                                 ${trip.specialRequests ? `<p style="margin: 0.5rem 0; color: #6366f1; font-size: 0.875rem;">📝 ${trip.specialRequests}</p>` : ''}
+                                <p style="margin: 0.75rem 0 0; font-size: 0.75rem; color: var(--text-secondary); cursor: help;">👆 Click for full details</p>
                             </div>
                             <div style="text-align: right;">
                                 <span class="badge badge-${trip.status.toLowerCase()}">${trip.status}</span>
@@ -564,6 +689,26 @@ async function renderScheduleView(content) {
                 ${scheduleHtml}
             </div>
         `;
+
+        // Attach click listeners to trip cards
+        content.querySelectorAll('.trip-card').forEach(card => {
+            card.addEventListener('mouseenter', () => {
+                card.style.boxShadow = '0 8px 16px rgba(0,0,0,0.15)';
+                card.style.transform = 'translateY(-2px)';
+            });
+            card.addEventListener('mouseleave', () => {
+                card.style.boxShadow = '0 2px 4px rgba(0,0,0,0.05)';
+                card.style.transform = 'translateY(0)';
+            });
+
+            card.addEventListener('click', async () => {
+                const tripId = card.getAttribute('data-trip-id');
+                const trip = allBookings.find(b => b.id === tripId);
+                if (trip) {
+                    showTripDetailsModal(trip, 'driver');
+                }
+            });
+        });
     } catch (e) {
         console.error(e);
         content.innerHTML = `<div style="padding:2rem;color:red;">Error loading schedule.</div>`;
@@ -576,7 +721,7 @@ async function renderHistoryView(content) {
     try {
         const res = await api.getBookings();
         const allBookings = await res.json();
-        const completedTrips = allBookings.filter(b => b.status === "COMPLETED").sort((a, b) => new Date(b.endDate) - new Date(a.endDate));
+        const completedTrips = allBookings.filter(b => b.status === "COMPLETED" && b.paymentStatus === "PAID").sort((a, b) => new Date(b.endDate) - new Date(a.endDate));
 
         let historyHtml = '';
         if (completedTrips.length === 0) {

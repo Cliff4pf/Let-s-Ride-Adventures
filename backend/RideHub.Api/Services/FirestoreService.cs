@@ -201,6 +201,22 @@ namespace RideHub.Api.Services
             await _firestoreDb.Collection("notifications").AddAsync(notif);
         }
 
+        public async Task<List<Notification>> GetNotificationsByUserAsync(string userId)
+        {
+            Query query = _firestoreDb.Collection("notifications")
+                .WhereEqualTo("UserId", userId)
+                .OrderByDescending("CreatedAt");
+            QuerySnapshot snapshot = await query.GetSnapshotAsync();
+            var list = new List<Notification>();
+            foreach (var doc in snapshot.Documents)
+            {
+                var n = doc.ConvertTo<Notification>();
+                n.Id = doc.Id;
+                list.Add(n);
+            }
+            return list;
+        }
+
         // Audit Logs
         public async Task CreateAuditLogAsync(AuditLog log)
         {

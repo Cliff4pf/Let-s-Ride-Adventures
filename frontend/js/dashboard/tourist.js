@@ -1,8 +1,13 @@
 import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
-import { attachLogoutListener } from "./logout-helper.js";
+import { attachLogoutListener, handleLogout } from "./logout-helper.js";
 import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
 import { showPaymentAndRatingModal } from "./payment-confirmation-modal.js";
+import { showTripDetailsModal, ensureGetUserAPI } from "./trip-details-modal.js";
+import { showBillingModal } from "./billing-modal.js";
+
+// Ensure API has getUser method
+ensureGetUserAPI();
 
 // Helper functions
 function getVehicleIcon(vehicleType) {
@@ -40,6 +45,29 @@ function calculateUserRating(bookings) {
     return Math.round(rating * 10) / 10; // Round to 1 decimal place
 }
 
+// polling helper used by dashboard to alert tourists when payment is due
+let dashboardPollInterval = null;
+
+function startDashboardPolling(sidebar, content) {
+    if (dashboardPollInterval) clearInterval(dashboardPollInterval);
+    // poll every 2 seconds for near-instant detection when driver completes trip
+    dashboardPollInterval = setInterval(async () => {
+        try {
+            const res = await api.getBookings();
+            if (!res.ok) return;
+            const bookings = await res.json();
+            const unpaid = bookings.find(b => b.status === 'COMPLETED' && b.paymentStatus !== 'PAID');
+            if (unpaid) {
+                showBillingModal(unpaid, async () => {
+                    renderTouristUI(sidebar, content, 'dashboard');
+                });
+            }
+        } catch (err) {
+            console.warn('Dashboard polling failed', err);
+        }
+    }, 2000); // every 2 seconds for speedy detection
+}
+
 // Show feedback prompt modal for completed trips
 async function showFeedbackPrompt(booking) {
     const modal = document.createElement('div');
@@ -48,59 +76,25 @@ async function showFeedbackPrompt(booking) {
     modal.style.zIndex = '3000';
     modal.innerHTML = `
         <div class="modal-content" style="max-width: 500px;">
-            <div class="modal-header">
+            <div class="modal-header" style="display: flex; align-items: center; justify-content: space-between; padding: 1.5rem; border-bottom: 1px solid var(--border-color);">
                 <h3 style="margin: 0; display: flex; align-items: center; gap: 0.75rem;">
-                    Rating Your Experience
+                    ✅ Booking Confirmed
                 </h3>
-                <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">x</button>
+                <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary); padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">×</button>
             </div>
             <div class="modal-body" style="padding: 1.5rem;">
-                <p style="margin-top: 0; color: var(--text-secondary);">How was your trip to <strong>${booking.destination}</strong>?</p>
-                
-                <div style="margin: 1.5rem 0;">
-                    <label style="display: block; margin-bottom: 0.75rem; font-weight: 500;">Trip Rating</label>
-                    <div style="display: flex; gap: 0.5rem; font-size: 2rem;" id="ratingStars">
-                        <button type="button" data-rating="1" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
-                        <button type="button" data-rating="2" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
-                        <button type="button" data-rating="3" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
-                        <button type="button" data-rating="4" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
-                        <button type="button" data-rating="5" style="background: none; border: none; cursor: pointer; opacity: 0.4;">*</button>
-                    </div>
-                </div>
-                
-                <div style="margin: 1.5rem 0;">
-                    <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Comments (Optional)</label>
-                    <textarea id="feedbackComment" placeholder="Share your feedback..." class="form-control" 
-                              style="width: 100%; height: 100px; padding: 0.75rem; border: 1px solid var(--border-color); border-radius: 6px; font-family: inherit;"></textarea>
-                </div>
+                <p style="margin-top: 0; color: var(--text-secondary);">Your trip to <strong>${booking.destination}</strong> has been successfully booked!</p>
                 
                 <div style="display: flex; gap: 0.75rem; margin-top: 2rem;">
-                    <button type="button" id="submitFeedbackBtn" class="btn btn-primary" style="flex: 1;">Submit Feedback</button>
-                    <button type="button" id="skipFeedbackBtn" class="btn btn-secondary" style="flex: 1;">Skip for Now</button>
+                    <button type="button" id="submitFeedbackBtn" class="btn btn-primary" style="flex: 1;">Done</button>
                 </div>
             </div>
         </div>
-    `;
-    
+    `;    
     document.body.appendChild(modal);
-    
-    let selectedRating = 0;
-    const starsContainer = modal.querySelector('#ratingStars');
-    const stars = starsContainer.querySelectorAll('[data-rating]');
-    
-    stars.forEach(star => {
-        star.addEventListener('click', (e) => {
-            selectedRating = parseInt(e.target.dataset.rating);
-            stars.forEach((s, idx) => {
-                s.style.opacity = (idx + 1) <= selectedRating ? '1' : '0.4';
-            });
-        });
-    });
     
     const closeBtn = modal.querySelector('.modal-close-btn');
     const submitBtn = modal.querySelector('#submitFeedbackBtn');
-    const skipBtn = modal.querySelector('#skipFeedbackBtn');
-    const commentInput = modal.querySelector('#feedbackComment');
     
     const closeModal = () => {
         modal.style.opacity = '0';
@@ -108,36 +102,9 @@ async function showFeedbackPrompt(booking) {
     };
     
     closeBtn.addEventListener('click', closeModal);
-    skipBtn.addEventListener('click', closeModal);
+    submitBtn.addEventListener('click', closeModal);
     modal.addEventListener('click', (e) => {
         if (e.target === modal) closeModal();
-    });
-    
-    submitBtn.addEventListener('click', async (e) => {
-        if (selectedRating === 0) {
-            showToast('Please select a rating', '#ef4444');
-            return;
-        }
-        
-        try {
-            const feedback = {
-                bookingId: booking.id,
-                rating: selectedRating,
-                comment: commentInput.value || '',
-                driverId: booking.assignedDriverId || ''
-            };
-            
-            const res = await api.createFeedback(feedback);
-            if (res.ok) {
-                showToast('Thank you for your feedback!', '#10b981');
-                closeModal();
-            } else {
-                showToast('Failed to submit feedback', '#ef4444');
-            }
-        } catch (error) {
-            console.error('Error submitting feedback:', error);
-            showToast('Error submitting feedback', '#ef4444');
-        }
     });
 }
 
@@ -209,18 +176,7 @@ function setupMenuBarEvents() {
         });
     }
 
-    // Logout button in settings
-    if (logoutSettingBtn) {
-        logoutSettingBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            const { signOut } = await import("https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js");
-            const { auth } = await import('./firebase.js');
-            await signOut(auth);
-            localStorage.removeItem('ridehub_token');
-            localStorage.removeItem('ridehub_role');
-            window.location.href = 'index.html';
-        });
-    }
+    // Logout button in settings is wired automatically via logout-helper
 
     // Notifications button - show booking status updates
     if (notificationBtn) {
@@ -242,11 +198,28 @@ function setupMenuBarEvents() {
 // Show notifications modal with booking status updates
 async function showNotificationsModal() {
     try {
+        // fetch any system notifications stored in backend
+        let customNotifs = [];
+        try {
+            const nres = await api.getNotifications();
+            if (nres && nres.ok) {
+                const ndata = await nres.json();
+                customNotifs = ndata.data || [];
+            }
+        } catch (e) {
+            console.warn('Unable to load custom notifications', e);
+            // don't fail silently - just skip custom notifications
+        }
+
         const res = await api.getBookings();
+        if (!res.ok) {
+            console.error('Failed to fetch bookings');
+            return;
+        }
         const bookings = await res.json();
         
         // Filter notifications - primarily completed or upcoming bookings with important updates
-        const notifications = bookings
+        const bookingNotifs = bookings
             .sort((a, b) => new Date(b.startDate) - new Date(a.startDate))
             .map(b => {
                 let notifIcon = '';
@@ -254,10 +227,16 @@ async function showNotificationsModal() {
                 let notifColor = '';
 
                 if (b.status === 'COMPLETED') {
-                    notifIcon = '✅';
-                    notifMessage = `Trip to ${b.destination} completed successfully!`;
-                    notifColor = '#10b981';
-                } else if (b.status === 'ASSIGNED') {
+                    if (b.paymentStatus !== 'PAID') {
+                        notifIcon = '💳';
+                        notifMessage = `Trip to ${b.destination} completed. Please clear payment of KSH ${b.price || 0}.`;
+                        notifColor = '#10b981';
+                    } else {
+                        notifIcon = '✅';
+                        notifMessage = `Trip to ${b.destination} completed successfully!`;
+                        notifColor = '#10b981';
+                    }
+                } else if (b.status === 'ASSIGNED') { 
                     notifIcon = '🚗';
                     notifMessage = `Driver assigned for ${b.destination}. Check vehicle details.`;
                     notifColor = '#3b82f6';
@@ -273,6 +252,17 @@ async function showNotificationsModal() {
 
                 return { icon: notifIcon, message: notifMessage, color: notifColor, booking: b };
             });
+
+        // convert backend notifications to same shape
+        const extraNotifs = customNotifs.map(n => ({
+            icon: '🔔',
+            message: n.Message || n.message || '',
+            color: '#3b82f6',
+            booking: null,
+            timestamp: n.CreatedAt
+        }));
+
+        const notifications = [...extraNotifs, ...bookingNotifs];
 
         const notificationHTML = `
             <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 5000;">
@@ -296,10 +286,11 @@ async function showNotificationsModal() {
                         ` : `
                             <div style="display: flex; flex-direction: column; gap: 1rem;">
                                 ${notifications.map(notif => `
-                                    <div style="display: flex; gap: 1rem; padding: 1rem; background: var(--surface-hover); border-radius: 8px; border-left: 4px solid ${notif.color};">
+                                    <div class="notif-item" data-booking-id="${notif.booking ? notif.booking.id : ''}" style="cursor: pointer; display: flex; gap: 1rem; padding: 1rem; background: var(--surface-hover); border-radius: 8px; border-left: 4px solid ${notif.color};">
                                         <div style="flex-shrink: 0;">${notif.icon}</div>
                                         <div style="flex: 1;">
                                             <p style="margin: 0; color: var(--text-primary); font-weight: 500;">${notif.message}</p>
+                                            ${notif.booking ? `
                                             <p style="margin: 0.5rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">
                                                 ${new Date(notif.booking.startDate).toLocaleDateString()} at ${new Date(notif.booking.startDate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
                                             </p>
@@ -318,6 +309,16 @@ async function showNotificationsModal() {
                                                     </div>
                                                 </div>
                                             ` : ''}
+                                            ${notif.booking.status === 'COMPLETED' && notif.booking.paymentStatus !== 'PAID' ? `
+                                                <button class="btn btn-primary pay-now-btn" data-id="${notif.booking.id}" style="margin-top:0.75rem;">
+                                                    💰 Clear Payment
+                                                </button>
+                                            ` : ''}
+                                            ` : `
+                                            <p style="margin: 0.5rem 0 0; color: var(--text-secondary); font-size: 0.75rem;">
+                                                ${notif.timestamp ? new Date(notif.timestamp).toLocaleString() : ''}
+                                            </p>
+                                            `}
                                         </div>
                                     </div>
                                 `).join('')}
@@ -345,10 +346,42 @@ async function showNotificationsModal() {
             if (e.target === modal) closeModal();
         });
 
+        // Payment buttons inside notifications
+        notifContainer.querySelectorAll('.pay-now-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                const bookingId = btn.getAttribute('data-id');
+                try {
+                    await api.updatePaymentStatus(bookingId, 'PAID');
+                    showToast('Payment cleared. Thank you!', '#10b981');
+                    closeModal();
+                    const sidebar = document.getElementById('sidebarMenu');
+                    const content = document.getElementById('dashboardContent');
+                    if (sidebar && content) renderTouristUI(sidebar, content);
+                } catch (err) {
+                    console.error('Payment update failed', err);
+                    showToast('Failed to clear payment', '#ef4444');
+                }
+            });
+        });
+
+        // Make notifications clickable
+        notifContainer.querySelectorAll('.notif-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const bookingId = item.getAttribute('data-booking-id');
+                if (bookingId) {
+                    const notif = notifications.find(n => n.booking && n.booking.id === bookingId);
+                    if (notif && notif.booking) {
+                        showTripDetailsModal(notif.booking, 'tourist');
+                        closeModal();
+                    }
+                }
+            });
+        });
+
         // Update notification badge count
         const notificationBadge = document.getElementById('notificationBadge');
         if (notificationBadge) {
-            const importantCount = notifications.filter(n => n.booking.status !== 'COMPLETED').length;
+            const importantCount = notifications.filter(n => n.booking.status !== 'COMPLETED' || n.booking.paymentStatus !== 'PAID').length;
             notificationBadge.textContent = importantCount;
         }
     } catch (error) {
@@ -358,6 +391,12 @@ async function showNotificationsModal() {
 }
 
 export async function renderTouristUI(sidebar, content, section = 'dashboard') {
+    // clear any existing polling when navigating between sections
+    if (dashboardPollInterval) {
+        clearInterval(dashboardPollInterval);
+        dashboardPollInterval = null;
+    }
+
     sidebar.innerHTML = `
         ${createNavItem('Dashboard', icons.dashboard, 'dashboard', section === 'dashboard')}
         ${createNavItem('Book a Ride', icons.book, 'bookings', section === 'bookings')}
@@ -428,19 +467,70 @@ async function renderTouristDashboardView(sidebar, content) {
         const bookings = await res.json();
         showToast('Bookings loaded', '#4f46e5');
 
+        // if there is a completed trip that hasn't been paid yet, prompt immediately
+        const unpaidCompleted = bookings.find(b => b.status === 'COMPLETED' && b.paymentStatus !== 'PAID');
+        if (unpaidCompleted) {
+            // show the billing modal for payment
+            showBillingModal(unpaidCompleted, async () => {
+                // after payment we re-render dashboard
+                renderTouristUI(sidebar, content, 'dashboard');
+            });
+        }
+
+        // start polling for new unpaid completed trips while dashboard is open
+        startDashboardPolling(sidebar, content);
+
         const pendingCount = bookings.filter(b => b.status === "PENDING" || b.status === "APPROVED").length;
-        const historyCount = bookings.filter(b => b.status === "COMPLETED" || b.status === "CANCELLED").length;
-        const completed = bookings.filter(b => b.status === "COMPLETED").length;
+        // Only count trips that are both completed and paid (or cancelled entries for history)
+        const historyCount = bookings.filter(b => (b.status === "COMPLETED" && b.paymentStatus === "PAID") || b.status === "CANCELLED").length;
+        const completed = bookings.filter(b => b.status === "COMPLETED" && b.paymentStatus === "PAID").length;
         const totalTrips = bookings.length;
         const uniquePlaces = new Set(bookings.filter(b => b.status === "COMPLETED").map(b => b.destination).filter(d => d)).size;
         const userRating = calculateUserRating(bookings);
+
+        // promotional content shown below bookings table; uses static images for now
+        const promoSectionHtml = `
+            <div class="promo-section animate-fade-in-up">
+                <h3 style="text-align:center; font-size:1.5rem; margin-bottom:1rem;">Explore Popular Tours</h3>
+                <div class="promo-grid">
+                    <div class="promo-card" data-action="bookings">
+                        <img src="https://letsadventureafrica.com/wp-content/uploads/elementor/thumbs/4-Days-Serengeti-Ngorongoro-crater-safari--qish1y3zmmvmknh6kqd95rndjs6u2r9mmd4veedvp4.jpg" alt="Serengeti Safari">
+                        <div class="promo-content">
+                            <div class="promo-title">Serengeti Safari</div>
+                            <div class="promo-link">Book a Ride</div>
+                        </div>
+                    </div>
+                    <div class="promo-card" data-action="bookings">
+                        <img src="https://letsadventureafrica.com/wp-content/uploads/elementor/thumbs/Giraffe-Center-Gallery-pnlt1gb647p4tqvovg8c6ksn5njyvsi6jwhs9spov8.jpg" alt="Giraffe Center">
+                        <div class="promo-content">
+                            <div class="promo-title">Giraffe Center Tour</div>
+                            <div class="promo-link">Book a Ride</div>
+                        </div>
+                    </div>
+                    <div class="promo-card" data-action="bookings">
+                        <img src="https://letsadventureafrica.com/wp-content/uploads/elementor/thumbs/Hells-Gate-Lake-Naivasha-pnvzb24nxzq9zh9s0mbrskeyn5lbgmj4xw1il7kw5w.jpg" alt="Hells Gate & Lake Naivasha">
+                        <div class="promo-content">
+                            <div class="promo-title">Hells Gate & Lake Naivasha</div>
+                            <div class="promo-link">Book a Ride</div>
+                        </div>
+                    </div>
+                    <div class="promo-card" data-action="bookings">
+                        <img src="https://letsadventureafrica.com/wp-content/uploads/elementor/thumbs/Nairobi-City-Tour-pnrya7kkb2czd8e4c6zfzcdklq0jy29nzp6pdqou58.jpg" alt="Nairobi City Tour">
+                        <div class="promo-content">
+                            <div class="promo-title">Nairobi City Tour</div>
+                            <div class="promo-link">Book a Ride</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
 
         let tableHtml = '';
         if (bookings.length === 0) {
             tableHtml = `<tr><td colspan="5" style="text-align:center;">No bookings found.</td></tr>`;
         } else {
             tableHtml = bookings.map(b => `
-                <tr>
+                <tr class="booking-row" data-booking-id="${b.id}" style="cursor: pointer; transition: background-color 0.2s ease;">
                     <td>${new Date(b.startDate).toLocaleDateString()}</td>
                     <td>${b.destination || '-'}</td>
                     <td>${b.bookingType}</td>
@@ -527,7 +617,6 @@ async function renderTouristDashboardView(sidebar, content) {
                 <div style="padding: 0;">
                     ${bookings.length === 0 ? `
                         <div style="text-align: center; padding: 3rem 1.5rem; color: var(--text-secondary);">
-                            <div style="font-size: 3rem; margin-bottom: 1rem; opacity: 0.5;">${icons.book}</div>
                             <h4 style="margin-bottom: 0.5rem; color: var(--text-primary);">No bookings yet</h4>
                             <p style="margin-bottom: 1.5rem;">Start your journey by booking your first ride</p>
                             <button class="btn-modern btn-primary-modern" id="newBookingBtnEmpty">
@@ -591,30 +680,89 @@ async function renderTouristDashboardView(sidebar, content) {
             </div>
         `;
 
+        // insert promotional section below dashboard regardless of booking count
+        const promoContainer = document.createElement('div');
+        promoContainer.innerHTML = promoSectionHtml;
+        content.appendChild(promoContainer);
+
+        content.querySelectorAll('.booking-row').forEach(row => {
+            row.addEventListener('click', (e) => {
+                if (e.target.classList.contains('cancel-btn')) return; // Don't trigger modal on cancel button
+                const bookingId = row.getAttribute('data-booking-id');
+                const booking = bookings.find(b => b.id === bookingId);
+                if (booking) {
+                    showTripDetailsModal(booking, 'tourist');
+                }
+            });
+
+            // Hover effects for better UX
+            row.addEventListener('mouseenter', () => {
+                row.style.backgroundColor = 'var(--surface-hover)';
+            });
+            row.addEventListener('mouseleave', () => {
+                row.style.backgroundColor = 'transparent';
+            });
+        });
+
         content.querySelectorAll('.cancel-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
                 const id = e.target.getAttribute('data-id');
                 if (confirm("Are you sure you want to cancel this booking?")) {
-                    await api.cancelBooking(id);
-                    alert("Booking cancelled.");
-                    renderTouristUI(sidebar, content, 'dashboard');
+                    try {
+                        const response = await api.cancelBooking(id);
+                        if (response.ok || response.status === 200) {
+                            showToast('Booking cancelled successfully.', '#10b981');
+                            renderTouristUI(sidebar, content, 'dashboard');
+                        } else {
+                            showToast('Failed to cancel booking', '#ef4444');
+                        }
+                    } catch (err) {
+                        console.error('Error cancelling booking:', err);
+                        showToast('Failed to cancel booking', '#ef4444');
+                    }
                 }
             });
         });
 
-        // Add event listener for feedback buttons on completed bookings
-        content.querySelectorAll('button[data-id]:not(.cancel-btn)').forEach(btn => {
+        // payment buttons for clearing amount
+        content.querySelectorAll('.pay-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const bookingId = e.currentTarget.getAttribute('data-id');
+                const bookingId = btn.getAttribute('data-id');
+                if (!bookingId) return;
+                try {
+                    await api.updatePaymentStatus(bookingId, 'PAID');
+                    showToast('Payment cleared. Thank you!', '#10b981');
+                    const booking = bookings.find(b => b.id === bookingId);
+                    if (booking) {
+                        showFeedbackPrompt(booking);
+                    }
+                    renderTouristUI(sidebar, content, 'dashboard');
+                } catch (err) {
+                    console.error('Error updating payment status:', err);
+                    showToast('Failed to clear payment', '#ef4444');
+                }
+            });
+        });
+
+        // helper to cleanup any existing polling when leaving dashboard
+        if (window.dashboardPollInterval) {
+            clearInterval(window.dashboardPollInterval);
+            window.dashboardPollInterval = null;
+        }
+
+        // feedback buttons on paid completed bookings
+        content.querySelectorAll('.feedback-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const bookingId = btn.getAttribute('data-id');
                 const booking = bookings.find(b => b.id === bookingId);
                 if (booking) {
-                    showPaymentAndRatingModal(booking, null, null, () => {
-                        renderTouristUI(sidebar, content, 'dashboard');
-                    });
+                    showFeedbackPrompt(booking);
                 }
             });
         });
@@ -627,6 +775,13 @@ async function renderTouristDashboardView(sidebar, content) {
                     renderTouristUI(sidebar, content, 'bookings');
                 });
             }
+        });
+
+        // promo cards should also redirect to booking section when clicked
+        content.querySelectorAll('.promo-card').forEach(card => {
+            card.addEventListener('click', () => {
+                renderTouristUI(sidebar, content, 'bookings');
+            });
         });
     } catch (e) {
         console.error(e);
@@ -698,6 +853,78 @@ async function renderTouristBookingsView(sidebar, content) {
             <div class="stat-item">
                 <div class="stat-value" style="color: ${vehicleSummary.bike > 0 ? 'var(--success)' : 'var(--danger)'};">${vehicleSummary.bike}</div>
                 <div class="stat-label">${icons.bike} Bikes</div>
+            </div>
+        </div>
+
+        <!-- Popular Destinations Section -->
+        <div class="destinations-section animate-fade-in-up">
+            <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; color: var(--text-primary);">🌍 Popular Destinations</h3>
+            <div class="destinations-grid">
+                <div class="destination-card" data-destination="nairobi-national-park">
+                    <img src="https://images.unsplash.com/photo-1516426122078-c23e76319801?w=400&h=300&fit=crop" alt="Nairobi National Park" class="destination-card-image">
+                    <div class="destination-card-content">
+                        <div>
+                            <div class="destination-card-title">🦁 Nairobi National Park</div>
+                            <div class="destination-card-desc">See lions, giraffes & zebras with the skyline backdrop</div>
+                        </div>
+                        <button class="destination-card-select">Select</button>
+                    </div>
+                </div>
+
+                <div class="destination-card" data-destination="lake-naivasha">
+                    <img src="https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=400&h=300&fit=crop" alt="Lake Naivasha" class="destination-card-image">
+                    <div class="destination-card-content">
+                        <div>
+                            <div class="destination-card-title">🌊 Lake Naivasha</div>
+                            <div class="destination-card-desc">Scenic lake ideal for water sports & relaxation</div>
+                        </div>
+                        <button class="destination-card-select">Select</button>
+                    </div>
+                </div>
+
+                <div class="destination-card" data-destination="maasai-mara">
+                    <img src="https://images.unsplash.com/photo-1546182990-dffeafbe841d?w=400&h=300&fit=crop" alt="Masai Mara" class="destination-card-image">
+                    <div class="destination-card-content">
+                        <div>
+                            <div class="destination-card-title">🦁 Masai Mara</div>
+                            <div class="destination-card-desc">World-renowned safari destination with Big Five</div>
+                        </div>
+                        <button class="destination-card-select">Select</button>
+                    </div>
+                </div>
+
+                <div class="destination-card" data-destination="mount-kenya">
+                    <img src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop" alt="Mount Kenya" class="destination-card-image">
+                    <div class="destination-card-content">
+                        <div>
+                            <div class="destination-card-title">⛰️ Mount Kenya</div>
+                            <div class="destination-card-desc">Africa's second highest peak ideal for trekking</div>
+                        </div>
+                        <button class="destination-card-select">Select</button>
+                    </div>
+                </div>
+
+                <div class="destination-card" data-destination="mombasa-beach">
+                    <img src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=400&h=300&fit=crop" alt="Mombasa Beach" class="destination-card-image">
+                    <div class="destination-card-content">
+                        <div>
+                            <div class="destination-card-title">🏖️ Mombasa Beach</div>
+                            <div class="destination-card-desc">Sun, sand & sea with historical Swahili culture</div>
+                        </div>
+                        <button class="destination-card-select">Select</button>
+                    </div>
+                </div>
+
+                <div class="destination-card" data-destination="hells-gate">
+                    <img src="https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=400&h=300&fit=crop" alt="Hell's Gate" class="destination-card-image">
+                    <div class="destination-card-content">
+                        <div>
+                            <div class="destination-card-title">🔥 Hell's Gate N.P.</div>
+                            <div class="destination-card-desc">Dramatic gorge with geothermal springs & hiking</div>
+                        </div>
+                        <button class="destination-card-select">Select</button>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -932,6 +1159,19 @@ async function renderTouristBookingsView(sidebar, content) {
         const price = Math.round((basePrice + distance * 15) + passengers * 5);
         document.getElementById("priceDisplay").textContent = `Estimated Price: KSH ${price}`;
     }
+
+    // Handle destination card clicks to populate form
+    const destinationCards = document.querySelectorAll('.destination-card');
+    destinationCards.forEach(card => {
+        card.addEventListener('click', () => {
+            const destination = card.dataset.destination;
+            document.getElementById("destination").value = destination;
+            estimatePriceAndDistance();
+            updateMap();
+            // Scroll to booking form smoothly
+            document.querySelector('.booking-form-section').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    });
 
     // Add event listeners for real-time updates
     document.getElementById("destination").addEventListener("change", () => {
@@ -1527,6 +1767,78 @@ async function renderTouristDiscoverView(sidebar, content) {
                         <div style="padding: 1rem;">
                             <h4 style="margin: 0 0 0.5rem; color: var(--text-primary); font-weight: 600; font-size: 1rem;">Hell's Gate N.P.</h4>
                             <p style="margin: 0; color: var(--text-secondary); font-size: 0.75rem;">Dramatic gorge with geothermal springs & hiking</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Popular Tours Section -->
+            <div style="margin-bottom: 3rem;">
+                <h3 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 1.5rem; color: var(--text-primary);">🎫 Popular Tours & Experiences</h3>
+                <div class="destinations-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.5rem;">
+                    <div class="promo-card" style="border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); cursor: pointer; transition: transform 0.2s ease; background: var(--surface-color); height: 280px; display: flex; flex-direction: column;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 25px 50px -12px rgb(0 0 0 / 0.25)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1516426122078-c23e76319801?w=400&h=300&fit=crop" alt="Nairobi National Park" style="width: 100%; height: 160px; object-fit: cover;">
+                        <div style="padding: 1rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; font-size: 0.95rem;">🦁 Nairobi Safari Tour</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">See Big Five in the city</div>
+                            </div>
+                            <button style="font-size: 0.75rem; padding: 0.35rem 0.5rem; background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; align-self: flex-start;">Book Tour</button>
+                        </div>
+                    </div>
+
+                    <div class="promo-card" style="border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); cursor: pointer; transition: transform 0.2s ease; background: var(--surface-color); height: 280px; display: flex; flex-direction: column;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 25px 50px -12px rgb(0 0 0 / 0.25)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=400&h=300&fit=crop" alt="Lake Naivasha" style="width: 100%; height: 160px; object-fit: cover;">
+                        <div style="padding: 1rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; font-size: 0.95rem;">🌊 Lake Naivasha Escape</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">Boat rides & water sports</div>
+                            </div>
+                            <button style="font-size: 0.75rem; padding: 0.35rem 0.5rem; background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; align-self: flex-start;">Book Tour</button>
+                        </div>
+                    </div>
+
+                    <div class="promo-card" style="border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); cursor: pointer; transition: transform 0.2s ease; background: var(--surface-color); height: 280px; display: flex; flex-direction: column;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 25px 50px -12px rgb(0 0 0 / 0.25)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1546182990-dffeafbe841d?w=400&h=300&fit=crop" alt="Masai Mara" style="width: 100%; height: 160px; object-fit: cover;">
+                        <div style="padding: 1rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; font-size: 0.95rem;">🦁 Masai Mara Safari</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">Big Five safari adventure</div>
+                            </div>
+                            <button style="font-size: 0.75rem; padding: 0.35rem 0.5rem; background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; align-self: flex-start;">Book Tour</button>
+                        </div>
+                    </div>
+
+                    <div class="promo-card" style="border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); cursor: pointer; transition: transform 0.2s ease; background: var(--surface-color); height: 280px; display: flex; flex-direction: column;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 25px 50px -12px rgb(0 0 0 / 0.25)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=300&fit=crop" alt="Mount Kenya" style="width: 100%; height: 160px; object-fit: cover;">
+                        <div style="padding: 1rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; font-size: 0.95rem;">⛰️ Mount Kenya Trek</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">Peak trekking experience</div>
+                            </div>
+                            <button style="font-size: 0.75rem; padding: 0.35rem 0.5rem; background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; align-self: flex-start;">Book Tour</button>
+                        </div>
+                    </div>
+
+                    <div class="promo-card" style="border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); cursor: pointer; transition: transform 0.2s ease; background: var(--surface-color); height: 280px; display: flex; flex-direction: column;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 25px 50px -12px rgb(0 0 0 / 0.25)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=400&h=300&fit=crop" alt="Mombasa Beach" style="width: 100%; height: 160px; object-fit: cover;">
+                        <div style="padding: 1rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; font-size: 0.95rem;">🏖️ Mombasa Beach Getaway</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">Coastal paradise & culture</div>
+                            </div>
+                            <button style="font-size: 0.75rem; padding: 0.35rem 0.5rem; background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; align-self: flex-start;">Book Tour</button>
+                        </div>
+                    </div>
+
+                    <div class="promo-card" style="border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-md); cursor: pointer; transition: transform 0.2s ease; background: var(--surface-color); height: 280px; display: flex; flex-direction: column;" onmouseover="this.style.transform='translateY(-4px)'; this.style.boxShadow='0 25px 50px -12px rgb(0 0 0 / 0.25)'" onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 4px 6px -1px rgb(0 0 0 / 0.1)'">
+                        <img src="https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?w=400&h=300&fit=crop" alt="Hell's Gate" style="width: 100%; height: 160px; object-fit: cover;">
+                        <div style="padding: 1rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+                            <div>
+                                <div style="font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem; font-size: 0.95rem;">🔥 Hell's Gate Adventure</div>
+                                <div style="font-size: 0.75rem; color: var(--text-secondary); line-height: 1.4;">Hiking & geothermal springs</div>
+                            </div>
+                            <button style="font-size: 0.75rem; padding: 0.35rem 0.5rem; background: linear-gradient(135deg, var(--primary-color), var(--secondary-color)); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; align-self: flex-start;">Book Tour</button>
                         </div>
                     </div>
                 </div>

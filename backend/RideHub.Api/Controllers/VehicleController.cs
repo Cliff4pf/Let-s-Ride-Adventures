@@ -110,8 +110,32 @@ namespace RideHub.Api.Controllers
             var driver = await _firestoreService.GetUserAsync(request.DriverId);
             if (driver == null || driver.Role != "Driver") return BadRequest("Invalid driver");
 
+            // ensure driver is not already assigned to another vehicle
+            var allVehicles = await _firestoreService.GetAllVehiclesAsync();
+            var conflict = allVehicles.FirstOrDefault(v => v.AssignedDriverId == request.DriverId && v.Id != id);
+            if (conflict != null)
+            {
+                return BadRequest(ApiResponse.Error("Driver is already mapped to another vehicle."));
+            }
+
+            // if this vehicle already has a different driver, clear the previous driver's assignment
+            if (!string.IsNullOrEmpty(vehicle.AssignedDriverId) && vehicle.AssignedDriverId != request.DriverId)
+            {
+                var priorDriver = await _firestoreService.GetUserAsync(vehicle.AssignedDriverId);
+                if (priorDriver != null && priorDriver.AssignedVehicleId == vehicle.Id)
+                {
+                    priorDriver.AssignedVehicleId = null;
+                    await _firestoreService.UpdateUserAsync(priorDriver);
+                }
+            }
+
             vehicle.AssignedDriverId = request.DriverId;
             await _firestoreService.UpdateVehicleAsync(vehicle);
+
+            // update driver record to reference this vehicle
+            driver.AssignedVehicleId = vehicle.Id;
+            await _firestoreService.UpdateUserAsync(driver);
+
             return Ok(new { message = "Driver assigned to vehicle successfully" });
         }
 
@@ -122,8 +146,22 @@ namespace RideHub.Api.Controllers
             var vehicle = await _firestoreService.GetVehicleAsync(id);
             if (vehicle == null) return NotFound("Vehicle not found");
 
+            // clear driver reference on vehicle
+            var oldDriverId = vehicle.AssignedDriverId;
             vehicle.AssignedDriverId = null;
             await _firestoreService.UpdateVehicleAsync(vehicle);
+
+            // also clear the driver's AssignedVehicleId if it matches
+            if (!string.IsNullOrEmpty(oldDriverId))
+            {
+                var driver = await _firestoreService.GetUserAsync(oldDriverId);
+                if (driver != null && driver.AssignedVehicleId == vehicle.Id)
+                {
+                    driver.AssignedVehicleId = null;
+                    await _firestoreService.UpdateUserAsync(driver);
+                }
+            }
+
             return Ok(new { message = "Driver unassigned from vehicle successfully" });
         }
     }
