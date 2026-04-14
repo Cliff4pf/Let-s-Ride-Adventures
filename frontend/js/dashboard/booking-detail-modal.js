@@ -4,10 +4,14 @@ import { showToast } from "./shared.js";
 
 export async function showBookingDetailModal(booking, allUsers = []) {
     try {
+        console.log('Showing booking detail modal for booking:', booking);
+        console.log('All users provided:', allUsers);
         // Fetch full user details if not provided
         let touristData = allUsers.find(u => u.uid === booking.userId);
         let driverData = booking.assignedDriverId ? allUsers.find(u => u.uid === booking.assignedDriverId) : null;
         let vehicleData = null;
+
+        console.log('Initial data lookup - touristData:', touristData, 'driverData:', driverData);
 
         // prepare list of drivers for potential assignment
         const drivers = allUsers.filter(u => u.role === 'Driver' && u.status === 'Active');
@@ -26,10 +30,13 @@ export async function showBookingDetailModal(booking, allUsers = []) {
         // If user data not provided, fetch it
         if (!touristData && booking.userId) {
             try {
-                const res = await api.getCurrentUser(); // This gets the logged-in user
+                console.log('Fetching tourist data for userId:', booking.userId);
+                const res = await api.getUser(booking.userId);
+                console.log('API response for tourist:', res.ok, res.status);
                 if (res.ok) {
                     const userData = await res.json();
                     touristData = userData.data || userData;
+                    console.log('Fetched tourist data:', touristData);
                 }
             } catch (err) {
                 console.warn('Could not fetch tourist details:', err);
@@ -50,9 +57,19 @@ export async function showBookingDetailModal(booking, allUsers = []) {
             }
         }
 
-        // Format dates
-        const startDate = new Date(booking.startDate);
-        const endDate = booking.endDate ? new Date(booking.endDate) : null;
+        // Format dates - handle Firestore timestamps
+        const createValidDate = (dateValue) => {
+            if (!dateValue) return new Date();
+            // Handle Firestore timestamp objects
+            if (typeof dateValue === 'object' && dateValue._seconds) {
+                return new Date(dateValue._seconds * 1000 + (dateValue._nanoseconds || 0) / 1000000);
+            }
+            const date = new Date(dateValue);
+            return isNaN(date.getTime()) ? new Date() : date;
+        };
+
+        const startDate = createValidDate(booking.startDate);
+        const endDate = booking.endDate ? createValidDate(booking.endDate) : null;
 
         const modalHtml = `
             <div class="modal-overlay" id="bookingDetailModal">
@@ -392,13 +409,28 @@ export async function showBookingDetailModal(booking, allUsers = []) {
                     }
                     try {
                         // Send only vehicleId; backend will auto-assign driver if not specified
-                        await api.assignBooking({ bookingId: booking.id, driverId: driverId || undefined, vehicleId });
+                        const response = await api.assignBooking({ bookingId: booking.id, driverId: driverId || undefined, vehicleId });
+                        if (!response.ok) {
+                            let errorMessage = 'Assignment failed';
+                            try {
+                                const errorData = await response.json();
+                                if (errorData && errorData.message) {
+                                    errorMessage = errorData.message;
+                                }
+                            } catch (parseError) {
+                                const errorText = await response.text();
+                                if (errorText) {
+                                    errorMessage = errorText;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        }
                         showToast('Booking approved and assigned!', '#10b981');
                         closeModal();
                         notifyChange();
                     } catch (err) {
                         console.error(err);
-                        showToast('Failed to assign booking', '#ef4444');
+                        showToast(`Failed to assign booking: ${err.message}`, '#ef4444');
                     }
                 });
             } else if (booking.status === 'APPROVED') {
@@ -478,13 +510,28 @@ export async function showBookingDetailModal(booking, allUsers = []) {
                     }
                     try {
                         // Send only vehicleId; backend will auto-assign driver if not specified
-                        await api.assignBooking({ bookingId: booking.id, driverId: driverId || undefined, vehicleId });
+                        const response = await api.assignBooking({ bookingId: booking.id, driverId: driverId || undefined, vehicleId });
+                        if (!response.ok) {
+                            let errorMessage = 'Assignment failed';
+                            try {
+                                const errorData = await response.json();
+                                if (errorData && errorData.message) {
+                                    errorMessage = errorData.message;
+                                }
+                            } catch (parseError) {
+                                const errorText = await response.text();
+                                if (errorText) {
+                                    errorMessage = errorText;
+                                }
+                            }
+                            throw new Error(errorMessage);
+                        }
                         showToast('Booking assigned!', '#10b981');
                         closeModal();
                         notifyChange();
                     } catch (err) {
                         console.error(err);
-                        showToast('Assignment failed', '#ef4444');
+                        showToast(`Assignment failed: ${err.message}`, '#ef4444');
                     }
                 });
             }
@@ -508,7 +555,10 @@ export async function showBookingDetailModal(booking, allUsers = []) {
 
         // Show modal with animation
         setTimeout(() => {
+            console.log('Setting modal display to flex and opacity to 1');
             modalElement.style.display = 'flex';
+            modalElement.style.opacity = '1';
+            modalElement.style.pointerEvents = 'auto';
         }, 10);
 
     } catch (error) {

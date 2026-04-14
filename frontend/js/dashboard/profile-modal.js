@@ -43,18 +43,9 @@ export async function openProfileModal() {
         const modal = document.createElement('div');
         modal.id = 'profileModal';
         modal.className = 'modal-overlay';
-        modal.style.opacity = '0';
-        modal.style.transition = 'opacity 0.3s ease';
+        modal.style.opacity = '1';
         modal.innerHTML = modalHtml;
         document.body.appendChild(modal);
-
-        // Attach event listeners
-        attachProfileModalEvents(modal, profile);
-
-        // Show modal with fade-in
-        setTimeout(() => {
-            modal.style.opacity = '1';
-        }, 10);
     } catch (error) {
         console.error('Profile modal error:', error);
         showToast('Failed to load profile', '#ef4444');
@@ -164,10 +155,7 @@ function attachProfileModalEvents(modal, originalProfile) {
     const saveBtn = modal.querySelector('#profileSaveBtn');
 
     const closeModal = () => {
-        modal.style.opacity = '0';
-        setTimeout(() => {
-            modal.remove();
-        }, 300);
+        modal.remove();
     };
 
     // Ensure close button is found and attach listener

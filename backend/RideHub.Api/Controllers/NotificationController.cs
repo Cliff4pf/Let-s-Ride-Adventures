@@ -4,6 +4,7 @@ using RideHub.Api.Services;
 
 namespace RideHub.Api.Controllers
 {
+    [Microsoft.AspNetCore.Authorization.Authorize]
     [ApiController]
     [Route("api/[controller]")]
     public class NotificationController : ControllerBase
@@ -40,7 +41,7 @@ namespace RideHub.Api.Controllers
             // since BookingController has this method, we just replicate the needed logic here
             var auth = HttpContext.User;
             if (auth == null || !auth.Identity.IsAuthenticated) return null;
-            var uid = auth.FindFirst("uid")?.Value;
+            var uid = auth.FindFirst("uid")?.Value ?? string.Empty;
             if (string.IsNullOrEmpty(uid)) return null;
             return await _firestoreService.GetUserAsync(uid);
         }

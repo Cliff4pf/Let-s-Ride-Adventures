@@ -67,6 +67,26 @@ namespace RideHub.Api.Controllers
             });
         }
 
+        // GET: api/feedback/booking/{bookingId}
+        [HttpGet("booking/{bookingId}")]
+        public async Task<IActionResult> GetFeedbackByBooking(string bookingId)
+        {
+            var feedbackList = await _firestoreService.GetFeedbackByBookingAsync(bookingId);
+            return Ok(feedbackList);
+        }
+
+        // GET: api/feedback/my
+        [HttpGet("my")]
+        public async Task<IActionResult> GetMyFeedback()
+        {
+            var userId = GetCurrentUserId();
+            if (string.IsNullOrEmpty(userId))
+                return Unauthorized(ApiResponse.Error("Unauthorized"));
+
+            var feedbackList = await _firestoreService.GetFeedbackByUserAsync(userId);
+            return Ok(feedbackList);
+        }
+
         // GET: api/feedback/{id}
         [HttpGet("{id}")]
         public async Task<IActionResult> GetFeedback(string id)

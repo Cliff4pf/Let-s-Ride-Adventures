@@ -2,7 +2,7 @@ import api from "../api.js";
 import { icons, createNavItem, showToast } from "./shared.js";
 import { attachLogoutListener, handleLogout } from "./logout-helper.js";
 import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
-import { showPaymentAndRatingModal } from "./payment-confirmation-modal.js";
+import { showPaymentConfirmationModal } from "./payment-confirmation-modal.js";
 import { showTripDetailsModal, ensureGetUserAPI } from "./trip-details-modal.js";
 import { showBillingModal } from "./billing-modal.js";
 
@@ -200,15 +200,18 @@ async function showNotificationsModal() {
     try {
         // fetch any system notifications stored in backend
         let customNotifs = [];
-        try {
-            const nres = await api.getNotifications();
-            if (nres && nres.ok) {
-                const ndata = await nres.json();
-                customNotifs = ndata.data || [];
+        const token = localStorage.getItem('ridehub_token');
+        if (token) {
+            try {
+                const nres = await api.getNotifications();
+                if (nres && nres.ok) {
+                    const ndata = await nres.json();
+                    customNotifs = ndata.data || [];
+                }
+            } catch (e) {
+                console.warn('Unable to load custom notifications', e);
+                // don't fail silently - just skip custom notifications
             }
-        } catch (e) {
-            console.warn('Unable to load custom notifications', e);
-            // don't fail silently - just skip custom notifications
         }
 
         const res = await api.getBookings();
@@ -381,12 +384,90 @@ async function showNotificationsModal() {
         // Update notification badge count
         const notificationBadge = document.getElementById('notificationBadge');
         if (notificationBadge) {
-            const importantCount = notifications.filter(n => n.booking.status !== 'COMPLETED' || n.booking.paymentStatus !== 'PAID').length;
+            const importantCount = notifications.filter(n => !n.booking || (n.booking.status !== 'COMPLETED' || n.booking.paymentStatus !== 'PAID')).length;
             notificationBadge.textContent = importantCount;
         }
     } catch (error) {
         console.error('Error loading notifications:', error);
         showToast('Failed to load notifications', '#ef4444');
+    }
+}
+
+async function updateNotificationBadge() {
+    try {
+        // fetch any system notifications stored in backend
+        let customNotifs = [];
+        try {
+            const nres = await api.getNotifications();
+            if (nres && nres.ok) {
+                const ndata = await nres.json();
+                customNotifs = ndata.data || [];
+            }
+        } catch (e) {
+            console.warn('Unable to load custom notifications', e);
+        }
+
+        const res = await api.getBookings();
+        if (!res.ok) {
+            console.error('Failed to fetch bookings');
+            return;
+        }
+        const bookings = await res.json();
+        
+        // Filter notifications - primarily completed or upcoming bookings with important updates
+        const bookingNotifs = bookings
+            .sort((a, b) => new Date(b.startDate) - new Date(a.startDate))
+            .map(b => {
+                let notifIcon = '';
+                let notifMessage = '';
+                let notifColor = '';
+
+                if (b.status === 'COMPLETED') {
+                    if (b.paymentStatus !== 'PAID') {
+                        notifIcon = '💳';
+                        notifMessage = `Trip to ${b.destination} completed. Please clear payment of KSH ${b.price || 0}.`;
+                        notifColor = '#10b981';
+                    } else {
+                        notifIcon = '✅';
+                        notifMessage = `Trip to ${b.destination} completed successfully!`;
+                        notifColor = '#10b981';
+                    }
+                } else if (b.status === 'ASSIGNED') { 
+                    notifIcon = '🚗';
+                    notifMessage = `Driver assigned for ${b.destination}. Check vehicle details.`;
+                    notifColor = '#3b82f6';
+                } else if (b.status === 'APPROVED') {
+                    notifIcon = '✓';
+                    notifMessage = `Booking approved for ${b.destination} on ${new Date(b.startDate).toLocaleDateString()}`;
+                    notifColor = '#10b981';
+                } else if (b.status === 'PENDING') {
+                    notifIcon = '⏳';
+                    notifMessage = `Booking pending for ${b.destination}. Awaiting approval.`;
+                    notifColor = '#f59e0b';
+                }
+
+                return { icon: notifIcon, message: notifMessage, color: notifColor, booking: b };
+            });
+
+        // convert backend notifications to same shape
+        const extraNotifs = customNotifs.map(n => ({
+            icon: '🔔',
+            message: n.Message || n.message || '',
+            color: '#3b82f6',
+            booking: null,
+            timestamp: n.CreatedAt
+        }));
+
+        const notifications = [...extraNotifs, ...bookingNotifs];
+
+        const importantCount = notifications.filter(n => !n.booking || (n.booking.status !== 'COMPLETED' || n.booking.paymentStatus !== 'PAID')).length;
+
+        const notificationBadge = document.getElementById('notificationBadge');
+        if (notificationBadge) {
+            notificationBadge.textContent = importantCount;
+        }
+    } catch (error) {
+        console.error('Error updating notification badge:', error);
     }
 }
 
@@ -467,6 +548,9 @@ async function renderTouristDashboardView(sidebar, content) {
         const bookings = await res.json();
         showToast('Bookings loaded', '#4f46e5');
 
+        // Update notification badge
+        await updateNotificationBadge();
+
         // if there is a completed trip that hasn't been paid yet, prompt immediately
         const unpaidCompleted = bookings.find(b => b.status === 'COMPLETED' && b.paymentStatus !== 'PAID');
         if (unpaidCompleted) {
@@ -489,41 +573,7 @@ async function renderTouristDashboardView(sidebar, content) {
         const userRating = calculateUserRating(bookings);
 
         // promotional content shown below bookings table; uses static images for now
-        const promoSectionHtml = `
-            <div class="promo-section animate-fade-in-up">
-                <h3 style="text-align:center; font-size:1.5rem; margin-bottom:1rem;">Explore Popular Tours</h3>
-                <div class="promo-grid">
-                    <div class="promo-card" data-action="bookings">
-                        <img src="https://letsadventureafrica.com/wp-content/uploads/elementor/thumbs/4-Days-Serengeti-Ngorongoro-crater-safari--qish1y3zmmvmknh6kqd95rndjs6u2r9mmd4veedvp4.jpg" alt="Serengeti Safari">
-                        <div class="promo-content">
-                            <div class="promo-title">Serengeti Safari</div>
-                            <div class="promo-link">Book a Ride</div>
-                        </div>
-                    </div>
-                    <div class="promo-card" data-action="bookings">
-                        <img src="https://letsadventureafrica.com/wp-content/uploads/elementor/thumbs/Giraffe-Center-Gallery-pnlt1gb647p4tqvovg8c6ksn5njyvsi6jwhs9spov8.jpg" alt="Giraffe Center">
-                        <div class="promo-content">
-                            <div class="promo-title">Giraffe Center Tour</div>
-                            <div class="promo-link">Book a Ride</div>
-                        </div>
-                    </div>
-                    <div class="promo-card" data-action="bookings">
-                        <img src="https://letsadventureafrica.com/wp-content/uploads/elementor/thumbs/Hells-Gate-Lake-Naivasha-pnvzb24nxzq9zh9s0mbrskeyn5lbgmj4xw1il7kw5w.jpg" alt="Hells Gate & Lake Naivasha">
-                        <div class="promo-content">
-                            <div class="promo-title">Hells Gate & Lake Naivasha</div>
-                            <div class="promo-link">Book a Ride</div>
-                        </div>
-                    </div>
-                    <div class="promo-card" data-action="bookings">
-                        <img src="https://letsadventureafrica.com/wp-content/uploads/elementor/thumbs/Nairobi-City-Tour-pnrya7kkb2czd8e4c6zfzcdklq0jy29nzp6pdqou58.jpg" alt="Nairobi City Tour">
-                        <div class="promo-content">
-                            <div class="promo-title">Nairobi City Tour</div>
-                            <div class="promo-link">Book a Ride</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        `;
+        const promoSectionHtml = ``;
 
         let tableHtml = '';
         if (bookings.length === 0) {
@@ -681,9 +731,9 @@ async function renderTouristDashboardView(sidebar, content) {
         `;
 
         // insert promotional section below dashboard regardless of booking count
-        const promoContainer = document.createElement('div');
-        promoContainer.innerHTML = promoSectionHtml;
-        content.appendChild(promoContainer);
+        // const promoContainer = document.createElement('div');
+        // promoContainer.innerHTML = promoSectionHtml;
+        // content.appendChild(promoContainer);
 
         content.querySelectorAll('.booking-row').forEach(row => {
             row.addEventListener('click', (e) => {
@@ -1288,8 +1338,8 @@ async function renderTouristBookingsView(sidebar, content) {
             const allBookings = await bookingDetailsRes.json();
             const fullBooking = allBookings.find(b => b.id === bookingId);
 
-            // Show payment confirmation + rating modal instead of just booking confirmation
-            showPaymentAndRatingModal(fullBooking || booking, sidebar, content, () => {
+            // Show payment confirmation modal instead of just booking confirmation
+            showPaymentConfirmationModal(fullBooking || booking, sidebar, content, () => {
                 renderTouristUI(sidebar, content, 'dashboard');
             });
         } catch (error) {

@@ -32,7 +32,6 @@ namespace RideHub.Api.Controllers
 
             // Peak Hours Analysis: group by hour of StartDate
             var peakHours = bookings
-                .Where(b => b.StartDate != null)
                 .GroupBy(b => b.StartDate.Hour)
                 .Select(g => new { Hour = g.Key, Bookings = g.Count() })
                 .OrderByDescending(g => g.Bookings)

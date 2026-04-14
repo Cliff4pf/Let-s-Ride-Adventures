@@ -308,9 +308,6 @@ ul {
     opacity: 0.9;
 }
 
-    font-weight: 500;
-}
-
 .social-btn:hover {
     border-color: var(--primary-color);
     background: var(--primary-light);
@@ -997,7 +994,7 @@ h1, h2, h3, h4 {
     flex-direction: column;
     flex: 1;
     min-height: 0;
-    overflow: hidden;
+    overflow-y: auto;
 }
 
 .page-header {
@@ -1172,8 +1169,8 @@ h3 svg {
     align-items: center;
     justify-content: center;
     z-index: 50;
-    opacity: 1;
-    pointer-events: auto;
+    opacity: 0;
+    pointer-events: none;
     transition: opacity 0.3s ease;
 }
 

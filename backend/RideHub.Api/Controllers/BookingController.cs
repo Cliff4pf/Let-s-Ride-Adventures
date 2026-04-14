@@ -63,7 +63,7 @@ namespace RideHub.Api.Controllers
                 Status = "PENDING",
                 CreatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp()
             };
-            string id = await _firestoreService.AddBookingAsync(booking);
+            string id = await _firestoreService.AddBookingAsync(booking)!;
             
             await _emailService.SendEmail(
                 profile.Email,
@@ -181,22 +181,33 @@ namespace RideHub.Api.Controllers
         [HttpPut("assign")]
         public async Task<IActionResult> AssignBookingWithVehicle([FromBody] AssignBookingDTO dto)
         {
+            Console.WriteLine($"AssignBookingWithVehicle called with BookingId: {dto.BookingId}, DriverId: {dto.DriverId}, VehicleId: {dto.VehicleId}");
+            
             if (!ModelState.IsValid) return BadRequest(ApiResponse.Error("Invalid request data."));
 
             var booking = await _firestoreService.GetBookingAsync(dto.BookingId);
-            if (booking == null) return NotFound(ApiResponse.Error("Booking not found."));
+            if (booking == null) {
+                Console.WriteLine($"Booking not found: {dto.BookingId}");
+                return NotFound(ApiResponse.Error("Booking not found."));
+            }
+            Console.WriteLine($"Found booking: {booking.Id}, Status: {booking.Status}");
 
             var vehicle = await _firestoreService.GetVehicleAsync(dto.VehicleId);
-            if (vehicle == null) return NotFound(ApiResponse.Error("Vehicle not found."));
+            if (vehicle == null) {
+                Console.WriteLine($"Vehicle not found: {dto.VehicleId}");
+                return NotFound(ApiResponse.Error("Vehicle not found."));
+            }
+            Console.WriteLine($"Found vehicle: {vehicle.Id}, IsAvailable: {vehicle.IsAvailable}");
 
             // Check if vehicle is available
             if (!vehicle.IsAvailable)
             {
+                Console.WriteLine($"Vehicle not available: {vehicle.Id}");
                 return BadRequest(ApiResponse.Error("Vehicle is not available."));
             }
 
             // Determine driver ID: use provided DriverId or auto-assign from vehicle's AssignedDriverId
-            string driverId = !string.IsNullOrEmpty(dto.DriverId) ? dto.DriverId : vehicle.AssignedDriverId;
+            string? driverId = !string.IsNullOrEmpty(dto.DriverId) ? dto.DriverId : vehicle.AssignedDriverId;
             
             if (string.IsNullOrEmpty(driverId))
             {
@@ -224,6 +235,8 @@ namespace RideHub.Api.Controllers
             await _firestoreService.UpdateBookingAsync(booking);
             await _firestoreService.UpdateVehicleAsync(vehicle);
 
+            Console.WriteLine($"Assignment completed. Booking status: {booking.Status}, Vehicle status: {vehicle.Status}");
+
             var tourist = await _firestoreService.GetUserAsync(booking.UserId);
 
             // Update vehicle status to Reserved when booking is assigned
@@ -246,6 +259,17 @@ namespace RideHub.Api.Controllers
                     $"Date: {booking.StartDate:MMMM dd, yyyy @ HH:mm}\n" +
                     $"Amount: KSH {booking.Price:N2}"
                 );
+
+                // Create in-app notification for tourist
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = tourist.Uid,
+                    Title = "Trip Assigned",
+                    Message = $"Your trip to {booking.Destination} has been assigned with driver {driver.FullName} and vehicle {vehicle.RegistrationNumber}.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
             }
 
             if (driver != null)
@@ -263,6 +287,17 @@ namespace RideHub.Api.Controllers
                     $"Vehicle: {vehicle.RegistrationNumber} - {vehicle.Make} {vehicle.Model}\n" +
                     $"Price: KSH {booking.Price:N2}"
                 );
+
+                // Create in-app notification for driver
+                await _firestoreService.CreateNotificationAsync(new Models.Notification
+                {
+                    UserId = driver.Uid,
+                    Title = "New Trip Assignment",
+                    Message = $"You have been assigned to trip {booking.Id} to {booking.Destination}. Please check your dashboard for details.",
+                    Type = "SYSTEM",
+                    IsRead = false,
+                    CreatedAt = DateTime.UtcNow
+                });
             }
 
             return Ok(new { message = "Booking assigned successfully" });

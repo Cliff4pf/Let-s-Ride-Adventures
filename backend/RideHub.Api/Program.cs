@@ -2,6 +2,7 @@ using FirebaseAdmin;
 using Google.Apis.Auth.OAuth2;
 using Google.Cloud.Firestore;
 using Microsoft.Extensions.FileProviders;
+using System.IO;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,12 +26,15 @@ string credentialPath = "firebase-key.json";
 // Check to avoid "App already exists" error during reload
 if (FirebaseApp.DefaultInstance == null)
 {
-    FirebaseApp.Create(new AppOptions()
+    using (var stream = File.OpenRead(credentialPath))
     {
-        Credential = Google.Apis.Auth.OAuth2.GoogleCredential
-            .FromFile(credentialPath)
-            .CreateScoped("https://www.googleapis.com/auth/cloud-platform")
-    });
+        var serviceAccountCredential = ServiceAccountCredential.FromServiceAccountData(stream);
+        var googleCredential = GoogleCredential.FromServiceAccountCredential(serviceAccountCredential);
+        FirebaseApp.Create(new AppOptions()
+        {
+            Credential = googleCredential.CreateScoped("https://www.googleapis.com/auth/cloud-platform")
+        });
+    }
 }
 
 // Configure Firestore

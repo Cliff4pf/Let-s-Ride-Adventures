@@ -253,6 +253,45 @@ namespace RideHub.Api.Controllers
             return Ok(new { message = "User suspended successfully" });
         }
 
+        [RoleAuthorize("Admin")]
+        [HttpPatch("{uid}/reinstate")]
+        public async Task<IActionResult> ReinstateUser(string uid)
+        {
+            await FirebaseAuth.DefaultInstance.UpdateUserAsync(new UserRecordArgs
+            {
+                Uid = uid,
+                Disabled = false
+            });
+
+            var userRef = await _firestoreService.GetUserAsync(uid);
+            if (userRef != null)
+            {
+                userRef.Status = "Active";
+                await _firestoreService.UpdateUserAsync(userRef);
+            }
+
+            var adminUid = User.FindFirst("user_id")?.Value ?? User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+            await _firestoreService.CreateAuditLogAsync(new AuditLog
+            {
+                ActionType = "USER_REINSTATED",
+                EntityId = uid,
+                EntityType = "User",
+                PerformedByUid = adminUid ?? "system"
+            });
+
+            if (userRef != null)
+            {
+                await _emailService.SendEmail(
+                    userRef.Email,
+                    "RideHub Account Reinstated",
+                    "Your RideHub account has been reinstated by an administrator. You can now log in and use our services."
+                );
+            }
+
+            return Ok(new { message = "User reinstated successfully" });
+        }
+
         [RoleAuthorize("Admin", "Secretary")]
         [HttpGet]
         public async Task<IActionResult> GetAllUsers()

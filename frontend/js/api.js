@@ -163,6 +163,10 @@ const api = {
         return this.fetchWithAuth('/Vehicle');
     },
 
+    getVehicle: async function (vehicleId) {
+        return this.fetchWithAuth(`/Vehicle/${vehicleId}`);
+    },
+
     addVehicle: async function(vehicleData) {
         return this.fetchWithAuth('/Vehicle', {
             method: 'POST',
@@ -206,6 +210,35 @@ const api = {
     unassignDriverFromVehicle: async function (vehicleId) {
         return this.fetchWithAuth(`/Vehicle/${vehicleId}/unassign-driver`, {
             method: 'PATCH'
+        });
+    },
+
+    // --- Driver API ---
+    getDrivers: async function () {
+        return this.fetchWithAuth('/Driver');
+    },
+
+    getDriver: async function (driverId) {
+        return this.fetchWithAuth(`/Driver/${driverId}`);
+    },
+
+    createDriver: async function (driverData) {
+        return this.fetchWithAuth('/Driver', {
+            method: 'POST',
+            body: JSON.stringify(driverData)
+        });
+    },
+
+    updateDriver: async function (driverId, updateData) {
+        return this.fetchWithAuth(`/Driver/${driverId}`, {
+            method: 'PUT',
+            body: JSON.stringify(updateData)
+        });
+    },
+
+    deleteDriver: async function (driverId) {
+        return this.fetchWithAuth(`/Driver/${driverId}`, {
+            method: 'DELETE'
         });
     },
     // --- Analytics API ---
@@ -351,6 +384,10 @@ const api = {
 
     getAuditLogsByAction: async function (actionType) {
         return this.fetchWithAuth(`/AuditLog/action/${actionType}`);
+    },
+
+    getMyAuditLogs: async function () {
+        return this.fetchWithAuth('/AuditLog/my');
     }
 };
 

@@ -349,11 +349,14 @@ async function renderDispatcherDashboard(content) {
     content.innerHTML = `<div style="padding:2rem;text-align:center;">Loading Dispatcher Board...</div>`;
 
     try {
+        console.log('Loading dispatcher dashboard...');
         const [bookingsRes, driversRes, vehiclesRes] = await Promise.all([
             api.getBookings(),
             api.getAllUsers(),
             api.getVehicles()
         ]);
+
+        console.log('API responses:', { bookingsRes: bookingsRes.ok, driversRes: driversRes.ok, vehiclesRes: vehiclesRes.ok });
 
         // Check if responses are ok before parsing JSON
         if (!bookingsRes.ok) {
@@ -374,10 +377,23 @@ async function renderDispatcherDashboard(content) {
         const allUsers = allUsersResp.data || allUsersResp || [];
         const allVehicles = allVehiclesResp.data || allVehiclesResp || [];
 
+        console.log('Data loaded:', {
+            bookings: allBookings.length,
+            users: allUsers.length,
+            vehicles: allVehicles.length
+        });
+
         const pendingBookings = allBookings.filter(b => b.status === "PENDING");
         const approvedBookings = allBookings.filter(b => b.status === "APPROVED");
         const activeDrivers = allUsers.filter(u => u.role === "Driver" && u.status === "Active");
         const availableVehicles = allVehicles.filter(v => v.isAvailable);
+
+        console.log('Filtered data:', {
+            pendingBookings: pendingBookings.length,
+            approvedBookings: approvedBookings.length,
+            activeDrivers: activeDrivers.length,
+            availableVehicles: availableVehicles.length
+        });
 
         let tableHtml = '';
         if (pendingBookings.length === 0 && approvedBookings.length === 0) {
@@ -530,18 +546,54 @@ async function renderDispatcherDashboard(content) {
                 const driverId = document.getElementById(`dsel-${id}`).value;
                 const vehicleId = document.getElementById(`vsel-${id}`).value;
 
+                console.log('Selected values:', { bookingId: id, driverId, vehicleId });
+
                 if (!vehicleId) {
                     alert('Please select a vehicle.');
                     return;
                 }
 
+                // Check if required fields are selected
+                if (!vehicleId) {
+                    showToast('Please select a vehicle.', '#ef4444');
+                    return;
+                }
+
                 try {
+                    console.log('Assigning booking:', { bookingId: id, driverId: driverId || undefined, vehicleId });
                     // Send driverId if selected; backend will auto-assign from vehicle if not provided
-                    await api.assignBooking({ bookingId: id, driverId: driverId || undefined, vehicleId });
-                    alert('Assignment locked successfully!');
-                    renderDispatcherDashboard(content);
+                    const response = await api.assignBooking({ bookingId: id, driverId: driverId || undefined, vehicleId });
+                    console.log('Assignment response:', response);
+                    
+                    if (!response.ok) {
+                        let errorMessage = `Assignment failed: ${response.status}`;
+                        try {
+                            const errorData = await response.json();
+                            if (errorData && errorData.message) {
+                                errorMessage = errorData.message;
+                            }
+                        } catch (parseError) {
+                            // If JSON parsing fails, use the text response
+                            const errorText = await response.text();
+                            if (errorText) {
+                                errorMessage = errorText;
+                            }
+                        }
+                        console.error('Assignment failed:', errorMessage);
+                        throw new Error(errorMessage);
+                    }
+                    
+                    const result = await response.json();
+                    console.log('Assignment result:', result);
+                    
+                    showToast('Assignment completed successfully! Driver and tourist have been notified.', '#10b981');
+                    // Force a complete reload to ensure data is fresh
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
                 } catch (err) {
-                    alert('Failed to assign booking. Vehicle might be taken.');
+                    console.error('Assignment error:', err);
+                    showToast(`Failed to assign booking: ${err.message}`, '#ef4444');
                 }
             });
         });

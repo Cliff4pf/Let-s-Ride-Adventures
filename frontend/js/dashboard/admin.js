@@ -349,7 +349,7 @@ function showAuditLogs() {
     modal.id = 'auditLogsModal';
     modal.style.display = 'flex';
     modal.style.zIndex = '3000';
-    modal.style.opacity = '0';
+    modal.style.opacity = '1';
     modal.addEventListener('click', (e) => {
         if (e.target === modal) {
             modal.style.opacity = '0';
@@ -391,11 +391,9 @@ function showAuditLogs() {
     `;
 
     document.body.appendChild(modal);
-    setTimeout(() => modal.style.opacity = '1', 10);
 
     const closeModal = () => {
-        modal.style.opacity = '0';
-        setTimeout(() => modal.remove(), 300);
+        modal.remove();
     };
 
     const closeBtn = modal.querySelector('#closeAuditModal');
@@ -420,8 +418,7 @@ function showAuditLogs() {
             const logType = item.getAttribute('data-log-type');
             const logId = item.getAttribute('data-log-id');
             
-            modal.style.opacity = '0';
-            setTimeout(() => modal.remove(), 300);
+            modal.remove();
             
             // Navigate to relevant section based on log type
             const content = document.querySelector('.main-content');
@@ -429,17 +426,25 @@ function showAuditLogs() {
                 case 'booking':
                 case 'completion':
                 case 'cancellation':
-                    adminState.activeTab = 'overview';
-                    renderAdminView(content);
-                    // Scroll to the specific booking if possible
-                    setTimeout(() => {
-                        const bookingRow = document.querySelector(`[data-id="${logId.split('-')[0]}"]`);
-                        if (bookingRow) {
-                            bookingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            bookingRow.style.backgroundColor = '#fff3cd';
-                            setTimeout(() => bookingRow.style.backgroundColor = '', 2000);
-                        }
-                    }, 500);
+                    // Show booking detail modal
+                    const bookingId = logId.split('-')[0]; // Remove suffix if any
+                    const booking = adminState.bookings.find(b => b.id === bookingId);
+                    if (booking) {
+                        showBookingDetailModal(booking);
+                    } else {
+                        // Fallback to navigating
+                        adminState.activeTab = 'overview';
+                        renderAdminView(content);
+                        // Scroll to the specific booking if possible
+                        setTimeout(() => {
+                            const bookingRow = document.querySelector(`[data-id="${logId.split('-')[0]}"]`);
+                            if (bookingRow) {
+                                bookingRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                bookingRow.style.backgroundColor = '#fff3cd';
+                                setTimeout(() => bookingRow.style.backgroundColor = '', 2000);
+                            }
+                        }, 500);
+                    }
                     break;
                 case 'registration':
                 case 'suspension':
@@ -522,19 +527,19 @@ function renderOverviewTab(content) {
 
     let bookingHtml = displayBookings.length === 0 ? `<tr><td colspan="6" style="text-align:center;">No bookings found.</td></tr>` :
         displayBookings.map(b => {
-            let actions = '';
+            let actions = `<button class="btn btn-info view-btn" data-id="${b.id}" style="font-size:0.75rem; margin-right:0.5rem;">View</button>`;
             if (b.status === 'PENDING') {
-                actions = `
+                actions += `
                     <button class="btn btn-primary approve-btn" data-id="${b.id}" style="margin-right:0.25rem; font-size:0.75rem; min-width:4rem; display:inline-block; text-align:center;">Approve</button>
                     <button class="btn btn-danger reject-btn" data-id="${b.id}" style="margin-right:0.25rem; font-size:0.75rem; min-width:4rem; display:inline-block; text-align:center;">Reject</button>
                     <button class="btn btn-secondary cancel-btn" data-id="${b.id}" style="font-size:0.75rem;">Cancel</button>
                 `;
             } else if (b.status === 'APPROVED') {
-                actions = `<button class="btn btn-warning update-status-btn" data-id="${b.id}" style="font-size:0.75rem;">Update Status</button>`;
+                actions += `<button class="btn btn-warning update-status-btn" data-id="${b.id}" style="font-size:0.75rem;">Update Status</button>`;
             } else if (b.status === 'ASSIGNED' || b.status === 'IN_PROGRESS') {
-                actions = `<button class="btn btn-warning update-status-btn" data-id="${b.id}" style="font-size:0.75rem;">Update Status</button>`;
+                actions += `<button class="btn btn-warning update-status-btn" data-id="${b.id}" style="font-size:0.75rem;">Update Status</button>`;
             } else if (b.status === 'COMPLETED' || b.status === 'CANCELLED') {
-                actions = `<span style="font-size:0.75rem; color:var(--text-secondary);">No actions available</span>`;
+                // actions already has view button
             }
 
             return `
@@ -746,6 +751,25 @@ function renderOverviewTab(content) {
             const id = e.currentTarget.getAttribute('data-id');
             showUpdateStatusModal(id);
         });
+    });
+
+    // Add click handlers for view buttons to show detail modal
+    content.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('view-btn')) {
+            e.stopPropagation();
+            const id = e.target.getAttribute('data-id');
+            try {
+                const booking = adminState.bookings.find(b => b.id === id);
+                if (booking) {
+                    await showBookingDetailModal(booking, adminState.users);
+                } else {
+                    showToast('Booking not found', '#ef4444');
+                }
+            } catch (error) {
+                console.error('Error showing booking details:', error);
+                showToast('Failed to load booking details', '#ef4444');
+            }
+        }
     });
 
     // Add click handlers for booking rows to show detail modal
@@ -2029,14 +2053,29 @@ function showDriverAssignmentModal(bookingId) {
 
         try {
             // Assign vehicle to booking; backend will auto-assign driver if not specified
-            await api.assignBooking({ bookingId, driverId: driverId || undefined, vehicleId });
+            const response = await api.assignBooking({ bookingId, driverId: driverId || undefined, vehicleId });
+            if (!response.ok) {
+                let errorMessage = 'Assignment failed';
+                try {
+                    const errorData = await response.json();
+                    if (errorData && errorData.message) {
+                        errorMessage = errorData.message;
+                    }
+                } catch (parseError) {
+                    const errorText = await response.text();
+                    if (errorText) {
+                        errorMessage = errorText;
+                    }
+                }
+                throw new Error(errorMessage);
+            }
             showToast('Driver and vehicle assigned successfully!');
             modal.remove();
             // Refresh data
             await loadAdminData(document.querySelector('.main-content'));
         } catch (error) {
             console.error('Assignment failed:', error);
-            showToast('Failed to assign driver and vehicle', '#ef4444');
+            showToast(`Failed to assign driver and vehicle: ${error.message}`, '#ef4444');
         }
     });
 }

@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("RideHub.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+bad3b50821c98dc99b458eb190f0ec706d7e43f5")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+f788899e95ddcdd0eaf7e3f4342fb481e3fdf73f")]
 [assembly: System.Reflection.AssemblyProductAttribute("RideHub.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("RideHub.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

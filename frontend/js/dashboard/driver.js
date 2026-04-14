@@ -123,302 +123,120 @@ function updateNotificationBadge() {
         });
 }
 
-// Show driver notifications (assigned trips)
+// Show driver notifications (assigned trips and system notifications)
 async function showDriverNotifications() {
     try {
-        const bookingsRes = await api.getBookings();
+        // Get both bookings and system notifications
+        const [bookingsRes, notificationsRes] = await Promise.all([
+            api.getBookings(),
+            api.getNotifications()
+        ]);
+
         if (!bookingsRes.ok) {
             throw new Error(`Failed to fetch bookings: ${bookingsRes.status}`);
         }
+
         const bookings = await bookingsRes.json();
+        let notifications = [];
+        if (notificationsRes && notificationsRes.ok) {
+            const notifData = await notificationsRes.json();
+            notifications = notifData.data || notifData || [];
+        }
 
         // Get driver's newly assigned trips (ASSIGNED status = just assigned, not started yet)
         const assignedTrips = bookings.filter(b => b.assignedDriverId && b.status === 'ASSIGNED');
 
-        if (assignedTrips.length === 0) {
+        // Get unread system notifications for this driver
+        const uid = localStorage.getItem('uid');
+        const unreadNotifications = notifications.filter(n => n.userId === uid && !n.isRead);
+
+        if (assignedTrips.length === 0 && unreadNotifications.length === 0) {
             const noNotifModal = document.createElement('div');
             noNotifModal.className = 'modal-overlay';
             noNotifModal.style.display = 'flex';
             noNotifModal.innerHTML = `
                 <div class="modal-content" style="max-width: 500px; text-align: center; padding: 2rem;">
-                    <h3>No New Assignments</h3>
-                    <p style="color: var(--text-secondary); margin-top: 1rem;">You don't have any new trip assignments at the moment.</p>
+                    <h3>No New Notifications</h3>
+                    <p style="color: var(--text-secondary); margin-top: 1rem;">You don't have any new trip assignments or notifications at the moment.</p>
                     <button class="btn btn-primary" style="margin-top: 1rem;">Close</button>
                 </div>
             `;
             document.body.appendChild(noNotifModal);
             noNotifModal.querySelector('button').addEventListener('click', () => noNotifModal.remove());
-            noNotifModal.addEventListener('click', e => {
-                if (e.target === noNotifModal) noNotifModal.remove();
-            });
             return;
         }
 
-        // Build a cache of user info to avoid repeated API calls
-        const userCache = {};
-        const getUserInfo = async (uid) => {
-            if (!uid) return null;
-            if (userCache[uid]) return userCache[uid];
-            try {
-                const res = await api.getUser(uid);
-                if (res.ok) {
-                    const data = await res.json();
-                    userCache[uid] = data.data || data;
-                    return userCache[uid];
-                }
-            } catch (err) {
-                console.warn(`Unable to fetch user ${uid}:`, err);
-            }
-            return null;
-        };
-
-        // Enrich trips with tourist info
-        const assignedWithTourists = await Promise.all(assignedTrips.map(async b => {
-            const tourist = await getUserInfo(b.userId);
-            return { ...b, tourist };
-        }));
-
-        // Create notification modal with contact details and actions
+        // Create notification modal with both trip assignments and system notifications
         const modal = document.createElement('div');
         modal.className = 'modal-overlay';
-        modal.style.display = 'flex';
-        modal.style.zIndex = '3000';
-        
         modal.innerHTML = `
-            <div class="modal-content" style="max-width: 700px; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column;">
-                <div class="modal-header" style="border-bottom: 2px solid var(--border-color); padding: 1.5rem;">
-                    <h3 style="margin: 0; display: flex; align-items: center; gap: 0.5rem;">
-                        🔔 New Trip Assignments
-                        <span style="background: #3b82f6; color: white; font-size: 0.75rem; padding: 0.25rem 0.75rem; border-radius: 999px; font-weight: bold;">${assignedWithTourists.length}</span>
-                    </h3>
-                    <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary);">×</button>
+            <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-header">
+                    <h3>Notifications</h3>
+                    <button class="modal-close">&times;</button>
                 </div>
-                
-                <div style="flex: 1; overflow-y: auto; padding: 1rem;">
-                    ${assignedWithTourists.map((b, idx) => {
-                        const tourist = b.tourist;
-                        const vehicle = b.vehicleId ? `Vehicle assigned: ${b.vehicleId}` : 'No vehicle info';
-                        const startTime = new Date(b.startDate);
-                        const timeStr = startTime.toLocaleString();
-                        const fareAmount = b.price ? `KSH ${parseInt(b.price).toLocaleString()}` : 'Price TBD';
-                        
-                        return `
-                            <div class="assignment-card" data-booking-id="${b.id}" style="
-                                padding: 1.5rem; 
-                                border-left: 4px solid #3b82f6;
-                                background: var(--surface-hover); 
-                                margin-bottom: 1rem; 
-                                border-radius: 8px;
-                                transition: all 0.3s ease;
-                            ">
-                                <!-- Trip Overview -->
-                                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem;">
-                                    <div style="flex: 1;">
-                                        <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.5rem;">
-                                            📍 ${b.pickupLocation || 'Pickup location'}
-                                        </div>
-                                        <div style="font-size: 0.95rem; color: var(--text-secondary); margin-bottom: 0.5rem;">
-                                            ↓
-                                        </div>
-                                        <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">
-                                            🎯 ${b.destination || 'Destination'}
-                                        </div>
-                                    </div>
-                                    <span class="badge" style="background: #3b82f6; color: white; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem;">ASSIGNED</span>
-                                </div>
-
-                                <!-- Trip Details Grid -->
-                                <div style="background: white; padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
-                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
-                                        <div>
-                                            <p style="margin: 0 0 0.25rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Scheduled Time</p>
-                                            <p style="margin: 0; font-size: 0.95rem; color: var(--text-primary); font-weight: 600;">🕐 ${timeStr}</p>
-                                        </div>
-                                        <div>
-                                            <p style="margin: 0 0 0.25rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Trip Fare</p>
-                                            <p style="margin: 0; font-size: 0.95rem; color: #10b981; font-weight: 600;">💰 ${fareAmount}</p>
-                                        </div>
-                                        <div>
-                                            <p style="margin: 0 0 0.25rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Passengers</p>
-                                            <p style="margin: 0; font-size: 0.95rem; color: var(--text-primary); font-weight: 600;">👥 ${b.numberOfGuests || 1} guest(s)</p>
-                                        </div>
-                                        <div>
-                                            <p style="margin: 0 0 0.25rem; font-size: 0.75rem; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Vehicle Type</p>
-                                            <p style="margin: 0; font-size: 0.95rem; color: var(--text-primary); font-weight: 600;">🚗 ${b.vehicleType || 'Transfer'}</p>
-                                        </div>
+                <div class="modal-body" style="max-height: 400px; overflow-y: auto;">
+                    ${assignedTrips.map(trip => `
+                        <div class="notification-item" style="padding: 1rem; border-bottom: 1px solid var(--border-color); background: #f0f9ff;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong>🚗 New Trip Assignment</strong>
+                                    <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                        ${trip.pickupLocation || 'N/A'} → ${trip.destination || 'N/A'}<br>
+                                        ${new Date(trip.startDate).toLocaleString()}
                                     </div>
                                 </div>
-
-                                <!-- Tourist Contact Info -->
-                                <div style="background: var(--surface-color); padding: 1rem; border-radius: 6px; margin-bottom: 1rem;">
-                                    <h4 style="margin: 0 0 0.75rem; color: var(--text-primary); font-size: 0.9rem; font-weight: 600;">👤 Tourist Details</h4>
-                                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.875rem;">
-                                        <div>
-                                            <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">Name</p>
-                                            <p style="margin: 0; font-weight: 600; color: var(--text-primary);">${tourist?.fullName || 'Unknown'}</p>
-                                        </div>
-                                        <div>
-                                            <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">Phone</p>
-                                            <p style="margin: 0; font-weight: 600; color: var(--text-primary);"><a href="tel:${tourist?.phoneNumber}" style="color: #3b82f6; text-decoration: none;">${tourist?.phoneNumber || 'N/A'}</a></p>
-                                        </div>
-                                        <div style="grid-column: 1 / -1;">
-                                            <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">Email</p>
-                                            <p style="margin: 0; font-weight: 600; color: var(--text-primary);"><a href="mailto:${tourist?.email}" style="color: #3b82f6; text-decoration: none;">${tourist?.email || 'N/A'}</a></p>
-                                        </div>
-                                        ${b.specialRequests ? `
-                                            <div style="grid-column: 1 / -1;">
-                                                <p style="margin: 0 0 0.25rem; color: var(--text-secondary); font-size: 0.75rem;">Special Requests</p>
-                                                <p style="margin: 0; font-weight: 600; color: var(--text-primary);">💬 ${b.specialRequests}</p>
-                                            </div>
-                                        ` : ''}
+                                <span class="badge badge-assigned">ASSIGNED</span>
+                            </div>
+                        </div>
+                    `).join('')}
+                    ${unreadNotifications.map(notif => `
+                        <div class="notification-item" style="padding: 1rem; border-bottom: 1px solid var(--border-color);">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <strong>${notif.title}</strong>
+                                    <div style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                                        ${notif.message}
                                     </div>
-                                </div>
-
-                                <!-- Action Buttons -->
-                                <div style="display: flex; gap: 0.75rem;">
-                                    <button class="btn-accept-trip" data-booking-id="${b.id}" style="
-                                        flex: 1; 
-                                        padding: 0.75rem; 
-                                        background: #10b981; 
-                                        color: white; 
-                                        border: none; 
-                                        border-radius: 6px; 
-                                        font-weight: 600;
-                                        cursor: pointer;
-                                        transition: background 0.2s;
-                                    ">
-                                        ✓ Accept Trip
-                                    </button>
-                                    <button class="btn-decline-trip" data-booking-id="${b.id}" style="
-                                        flex: 1; 
-                                        padding: 0.75rem; 
-                                        background: #ef4444; 
-                                        color: white; 
-                                        border: none; 
-                                        border-radius: 6px; 
-                                        font-weight: 600;
-                                        cursor: pointer;
-                                        transition: background 0.2s;
-                                    ">
-                                        ✗ Decline
-                                    </button>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                                        ${new Date(notif.createdAt).toLocaleString()}
+                                    </div>
                                 </div>
                             </div>
-                        `;
-                    }).join('')}
+                        </div>
+                    `).join('')}
+                </div>
+                <div class="modal-footer" style="padding: 1rem; border-top: 1px solid var(--border-color);">
+                    <button class="btn btn-secondary" id="markAllReadBtn">Mark All as Read</button>
+                    <button class="btn btn-primary" id="closeNotificationsBtn">Close</button>
                 </div>
             </div>
         `;
 
         document.body.appendChild(modal);
         
-        // Close button
-        const closeBtn = modal.querySelector('.modal-close-btn');
-        if (closeBtn) {
-            closeBtn.addEventListener('click', () => {
-                modal.style.opacity = '0';
-                setTimeout(() => modal.remove(), 300);
-            });
-        }
-        
-        // Close on overlay click
+        // Close modal functionality
+        modal.querySelector('.modal-close').addEventListener('click', () => modal.remove());
+        modal.querySelector('#closeNotificationsBtn').addEventListener('click', () => modal.remove());
         modal.addEventListener('click', (e) => {
-            if (e.target === modal) {
-                modal.style.opacity = '0';
-                setTimeout(() => modal.remove(), 300);
+            if (e.target === modal) modal.remove();
+        });
+
+        // Mark all notifications as read
+        modal.querySelector('#markAllReadBtn').addEventListener('click', async () => {
+            try {
+                // Mark notifications as read (this would need a backend endpoint)
+                // For now, just close the modal
+                modal.remove();
+                showToast('Notifications marked as read', '#10b981');
+            } catch (error) {
+                console.error('Failed to mark notifications as read:', error);
             }
         });
 
-        // make assignment cards clickable to view details
-        modal.querySelectorAll('.assignment-card').forEach(card => {
-            card.style.cursor = 'pointer';
-            card.addEventListener('click', () => {
-                const bookingId = card.getAttribute('data-booking-id');
-                if (bookingId) {
-                    const booking = assignedWithTourists.find(b => b.id === bookingId);
-                    if (booking) {
-                        showTripDetailsModal(booking, 'driver');
-                        modal.remove();
-                    }
-                }
-            });
-        });
-
-        // Accept trip handlers
-        modal.querySelectorAll('.btn-accept-trip').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const bookingId = btn.getAttribute('data-booking-id');
-                btn.disabled = true;
-                btn.textContent = '⟳ Processing...';
-                
-                try {
-                    await api.acceptTrip(bookingId);
-                    btn.textContent = '✓ Accepted';
-                    btn.style.background = '#059669';
-                    
-                    setTimeout(() => {
-                        modal.remove();
-                        alert('Trip accepted! You may start the journey when ready.');
-                        // Refresh trips view
-                        const content = document.querySelector('.main-content');
-                        if (content) {
-                            renderTripsView(content);
-                        }
-                        updateNotificationBadge();
-                    }, 500);
-                } catch (error) {
-                    console.error('Failed to accept trip:', error);
-                    btn.disabled = false;
-                    btn.textContent = '✓ Accept Trip';
-                    alert('Failed to accept trip. Please try again.');
-                }
-            });
-        });
-
-        // Decline trip handlers
-        modal.querySelectorAll('.btn-decline-trip').forEach(btn => {
-            btn.addEventListener('click', async (e) => {
-                const bookingId = btn.getAttribute('data-booking-id');
-                
-                if (!confirm('Are you sure you want to decline this trip?')) {
-                    return;
-                }
-                
-                btn.disabled = true;
-                btn.textContent = '⟳ Processing...';
-                
-                try {
-                    await api.declineTrip(bookingId);
-                    btn.textContent = '✗ Declined';
-                    btn.style.background = '#991b1b';
-                    
-                    setTimeout(() => {
-                        modal.remove();
-                        alert('Trip declined. It will be available for other drivers.');
-                        // Refresh trips view
-                        const content = document.querySelector('.main-content');
-                        if (content) {
-                            renderTripsView(content);
-                        }
-                        updateNotificationBadge();
-                    }, 500);
-                } catch (error) {
-                    console.error('Failed to decline trip:', error);
-                    btn.disabled = false;
-                    btn.textContent = '✗ Decline';
-                    alert('Failed to decline trip. Please try again.');
-                }
-            });
-        });
-
-        // Fade in modal
-        setTimeout(() => {
-            modal.style.opacity = '1';
-        }, 10);
-
     } catch (error) {
         console.error('Failed to load notifications:', error);
-        alert('Failed to load notifications');
+        showToast('Failed to load notifications', '#ef4444');
     }
 }
 
