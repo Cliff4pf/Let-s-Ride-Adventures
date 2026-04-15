@@ -1,0 +1,70 @@
+# Firebase Configuration
+backend/RideHub.Api/firebase-key.json
+firebase-key.json
+
+# Application Settings (use .example versions instead)
+backend/RideHub.Api/appsettings.json
+backend/RideHub.Api/appsettings.Production.json
+appsettings.*.json
+
+# Environment Variables
+.env
+.env.local
+.env.production
+
+# Build Output
+bin/
+obj/
+*.dll
+*.exe
+*.mdb
+*.pdb
+
+# Dependencies
+node_modules/
+packages/
+.nuget/
+
+# IDE Settings
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Build artifacts
+build_output.txt
+build.txt
+err.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+
+# Temporary files
+*.tmp
+*.backup
+.temp/
+
+# API Keys and Secrets (double-protection)
+**/firebase-key.json
+**/secret*.json
+**/credentials*.json
+*secret*
+*apikey*
+*APIKEY*
+
+# Tool outputs (unless explicitly needed)
+tools/*.log
+tools/output/

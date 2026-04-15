@@ -249,6 +249,8 @@ if (googleLoginBtn) {
                     }
                 });
 
+                let profile;
+
                 if (!response.ok) {
                     if (response.status === 404) {
                         // User doesn't exist in backend - need to create account
@@ -272,16 +274,19 @@ if (googleLoginBtn) {
                             await signOut(auth);
                             throw new Error('Failed to create account. Please try registering manually.');
                         }
+
+                        const regApiRes = await registerRes.json();
+                        profile = regApiRes.data;
                     } else {
                         await signOut(auth);
                         throw new Error("Account provisioning incomplete. Contact admin.");
                     }
+                } else {
+                    const apiRes = await response.json();
+                    profile = apiRes.data;
                 }
 
                 // 4. Check account status
-                const apiRes = await response.json();
-                const profile = apiRes.data;
-
                 if (profile.status !== 'Active') {
                     await signOut(auth);
                     if (profile.status === 'Suspended') {

@@ -20,7 +20,9 @@
 
 // configuration (allows env override for flexibility)
 const API_BASE = process.env.API_BASE || 'http://localhost:5202/api';
-const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || 'AIzaSyBLze9_ZJzihpwpyRl54V2D9uB4ZVNgvEQ'; // copied from frontend/firebase.js
+// IMPORTANT: Set FIREBASE_API_KEY environment variable before running this script
+// Get your Firebase API key from Firebase Console > Project Settings > Web API Key
+const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || 'YOUR_FIREBASE_API_KEY_HERE';
 
 // if you want the script to patch bookings directly (assign/completed)
 // it uses the Firestore SDK with the local service account key
