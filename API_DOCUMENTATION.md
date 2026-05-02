@@ -16,7 +16,7 @@ Content-Type: application/json
 {
   "fullName": "John Doe",
   "email": "john@example.com",
-  "password": "SecurePass123!",
+  "password": "YourSecurePassword123!",
   "phoneNumber": "+254712345678"
 }
 
