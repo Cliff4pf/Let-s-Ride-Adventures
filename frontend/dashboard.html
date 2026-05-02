@@ -4,7 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - RideHub</title>
+    <link rel="icon" href="favicon.ico" type="image/x-icon">
+    <title>RideHub Dashboard</title>
     <link rel="stylesheet" href="css/styles.css">
     <!-- Font Awesome for additional icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -54,7 +55,7 @@
                         <i class="fas fa-bars"></i>
                     </button>
                     <div class="page-info">
-                        <h3 id="topbarTitle" style="margin: 0; color: var(--text-primary); font-weight: 600;">Dashboard</h3>
+                        <h3 class="topbar-title" id="topbarTitle">Dashboard</h3>
                         <span class="page-subtitle" id="pageSubtitle">Welcome back to RideHub</span>
                     </div>
                 </div>
@@ -73,16 +74,16 @@
                                 <i class="fas fa-cog"></i>
                             </button>
                             <!-- Settings Dropdown Menu -->
-                            <div id="settingsDropdown" style="display: none; position: absolute; top: 100%; right: 0; background: white; border: 1px solid var(--border-color); border-radius: 8px; box-shadow: 0 10px 25px rgba(0,0,0,0.15); min-width: 200px; z-index: 1000; margin-top: 0.5rem;">
-                                <a href="#" id="profileSettingLink" style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; color: var(--text-primary); text-decoration: none; border-bottom: 1px solid var(--border-color); transition: background 0.2s;">
+                            <div class="settings-dropdown" id="settingsDropdown">
+                                <a href="#" class="dropdown-item" id="profileSettingLink">
                                     <i class="fas fa-user" style="font-size: 0.9rem;"></i>
                                     <span>Edit Profile</span>
                                 </a>
-                                <button id="themeToggleBtn" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; background: none; border: none; color: var(--text-primary); cursor: pointer; transition: background 0.2s; border-bottom: 1px solid var(--border-color);">
+                                <button class="dropdown-btn" id="themeToggleBtn">
                                     <i class="fas fa-moon" style="font-size: 0.9rem;"></i>
                                     <span>Dark Mode</span>
                                 </button>
-                                <button id="logoutSettingBtn" style="width: 100%; text-align: left; display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem 1rem; background: none; border: none; color: #ef4444; cursor: pointer; transition: background 0.2s; font-weight: 500;">
+                                <button class="dropdown-btn logout-btn" id="logoutSettingBtn">
                                     <i class="fas fa-sign-out-alt" style="font-size: 0.9rem;"></i>
                                     <span>Logout</span>
                                 </button>
@@ -91,8 +92,8 @@
                     </div>
                     <div class="user-profile-modern">
                         <div class="user-info">
-                            <div style="font-size: 0.875rem; font-weight: 600; color: var(--text-primary);" id="userName">User</div>
-                            <div style="font-size: 0.75rem; color: var(--text-secondary);" id="userRole">Role</div>
+                            <div class="user-name" id="userName">User</div>
+                            <div class="user-role" id="userRole">Role</div>
                         </div>
                         <div class="avatar-modern" id="userAvatar">U</div>
                     </div>
@@ -112,19 +113,17 @@
 
     <!-- Mock Payment Modal -->
     <div id="paymentModal" class="modal-overlay" style="display: none; z-index: 2000;">
-        <div class="modal-content" style="max-width: 400px; text-align: center;">
-            <div class="modal-header" style="justify-content: center; border-bottom: none;">
+        <div class="modal-content checkout-modal">
+            <div class="modal-header checkout-header">
                 <h3>Secure Checkout</h3>
             </div>
             <div class="modal-body">
-                <p style="color: var(--text-secondary); margin-bottom: 1.5rem;">Total Amount Due:
-                    <strong>$50.00</strong>
+                <p class="total-amount">Total Amount Due:
+                    <strong id="totalAmount">$50.00</strong>
                 </p>
 
-                <div id="paymentMethods"
-                    style="display: flex; gap: 1rem; justify-content: center; margin-bottom: 1.5rem;">
-                    <div
-                        style="border: 2px solid var(--primary-color); padding: 1rem; border-radius: 8px; flex: 1; cursor: pointer; font-weight: bold; color: var(--primary-color);">
+                <div class="payment-methods" id="paymentMethods">
+                    <div class="payment-option">
                         💳 Card
                     </div>
                     <div

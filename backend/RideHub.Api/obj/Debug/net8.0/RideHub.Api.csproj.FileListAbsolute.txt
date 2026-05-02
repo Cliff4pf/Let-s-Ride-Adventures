@@ -54,7 +54,6 @@ C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\obj\Debug\net8.0\r
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\obj\Debug\net8.0\RideHub.Api.pdb
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\obj\Debug\net8.0\RideHub.Api.genruntimeconfig.cache
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\obj\Debug\net8.0\ref\RideHub.Api.dll
-C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\firebase-key.json
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\Microsoft.AspNetCore.Authentication.JwtBearer.dll
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\Microsoft.IdentityModel.Abstractions.dll
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\Microsoft.IdentityModel.JsonWebTokens.dll
@@ -66,3 +65,6 @@ C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\S
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\SendGrid.dll
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\StarkbankEcdsa.dll
 C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\obj\Debug\net8.0\RideHub.Api.sourcelink.json
+C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\appsettings.example.json
+C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\firebase-key.example.json
+C:\Users\Cliff\OneDrive\Documents\RideHub\backend\RideHub.Api\bin\Debug\net8.0\firebase-key.json

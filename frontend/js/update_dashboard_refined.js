@@ -71,7 +71,7 @@ const bookingsViewReplacement = `async function renderTouristBookingsView(sideba
 
                 <div class="form-group" style="margin-top: 1rem;">
                     <button type="submit" class="btn btn-primary" style="width: 100%;">
-                        Proceed to Payment ($50.00)
+                        Proceed to Payment ($<span id="bookingPrice">50.00</span>)
                     </button>
                 </div>
             </form>

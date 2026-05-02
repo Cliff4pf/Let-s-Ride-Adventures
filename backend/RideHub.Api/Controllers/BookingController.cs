@@ -58,12 +58,12 @@ namespace RideHub.Api.Controllers
                 Price = dto.Price ?? 0,
                 PaymentStatus = "UNPAID",
                 NumberOfGuests = dto.NumberOfGuests ?? dto.PassengerCount,
-                VehiclePreference = dto.VehiclePreference ?? dto.VehicleType,
+                VehiclePreference = dto.VehiclePreference ?? dto.VehicleType ?? "Any",
                 SpecialRequests = dto.SpecialRequests ?? dto.Notes,
                 Status = "PENDING",
                 CreatedAt = Google.Cloud.Firestore.Timestamp.GetCurrentTimestamp()
             };
-            string id = await _firestoreService.AddBookingAsync(booking)!;
+            string id = await _firestoreService.AddBookingAsync(booking);
             
             await _emailService.SendEmail(
                 profile.Email,

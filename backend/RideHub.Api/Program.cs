@@ -19,11 +19,28 @@ builder.Services.AddCors(options =>
         });
 });
 
-// Define the path to the service account key
-string credentialPath = "firebase-key.json";
+// Define the path to the service account key. Use either:
+// 1) FIREBASE_CREDENTIALS_PATH in appsettings or env vars,
+// 2) GOOGLE_APPLICATION_CREDENTIALS env var, or
+// 3) the default firebase-key.json file in the project root.
+string? credentialPath = builder.Configuration["FirebaseCredentialsPath"]
+    ?? Environment.GetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS")
+    ?? Path.Combine(builder.Environment.ContentRootPath, "firebase-key.json");
 
-// Initialize Firebase Admin SDK
-// Check to avoid "App already exists" error during reload
+if (!Path.IsPathRooted(credentialPath))
+{
+    credentialPath = Path.Combine(builder.Environment.ContentRootPath, credentialPath);
+}
+
+if (!File.Exists(credentialPath))
+{
+    throw new FileNotFoundException(
+        $"Firebase credential file not found: '{credentialPath}'. " +
+        "Create a service account JSON file and place it in the API project root, " +
+        "or set GOOGLE_APPLICATION_CREDENTIALS / FirebaseCredentialsPath.");
+}
+
+// Initialize Firebase Admin SDK. Avoid duplicate app creation during reload.
 if (FirebaseApp.DefaultInstance == null)
 {
     using (var stream = File.OpenRead(credentialPath))
@@ -40,10 +57,7 @@ if (FirebaseApp.DefaultInstance == null)
 // Configure Firestore
 builder.Services.AddSingleton(provider =>
 {
-    Environment.SetEnvironmentVariable(
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        Path.Combine(builder.Environment.ContentRootPath, "firebase-key.json"));
-
+    Environment.SetEnvironmentVariable("GOOGLE_APPLICATION_CREDENTIALS", credentialPath);
     return FirestoreDb.Create("ridehub-4ab73");
 });
 

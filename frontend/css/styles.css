@@ -1256,6 +1256,203 @@ h3 svg {
 /* ==========================================
    Forms
    ========================================== */
+
+/* Additional classes for inline styles */
+.hero-title {
+    font-size: 3rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    background: linear-gradient(135deg, #ffffff 0%, #e0e7ff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.hero-subtitle {
+    font-size: 1.125rem;
+    opacity: 0.9;
+    max-width: 500px;
+    margin: 0 auto;
+}
+
+.login-card {
+    max-width: 420px;
+    width: 100%;
+    margin: 0 auto;
+}
+
+.login-card-padding {
+    padding: 2.5rem;
+}
+
+.login-logo-center {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.logo-circle {
+    width: 64px;
+    height: 64px;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 1rem;
+    box-shadow: var(--shadow-lg);
+}
+
+.social-btn-spacing {
+    margin-bottom: 0.75rem;
+}
+
+.password-toggle {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.error-message {
+    color: var(--danger);
+    font-size: 0.875rem;
+    margin-bottom: 1rem;
+    display: none;
+    padding: 0.75rem;
+    background: var(--danger-light);
+    border-radius: var(--radius-md);
+    border-left: 4px solid var(--danger);
+}
+
+.remember-forgot {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.forgot-link {
+    color: var(--primary-color);
+    font-weight: 600;
+    font-size: 0.875rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.full-width-btn {
+    width: 100%;
+    margin-bottom: 1.5rem;
+}
+
+.topbar-title {
+    margin: 0;
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.settings-dropdown {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.15);
+    min-width: 200px;
+    z-index: 1000;
+    margin-top: 0.5rem;
+}
+
+.dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    color: var(--text-primary);
+    text-decoration: none;
+    border-bottom: 1px solid var(--border-color);
+    transition: background 0.2s;
+}
+
+.dropdown-item:hover {
+    background: var(--surface-hover);
+}
+
+.dropdown-btn {
+    width: 100%;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.2s;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.dropdown-btn:hover {
+    background: var(--surface-hover);
+}
+
+.logout-btn {
+    color: #ef4444;
+    font-weight: 500;
+}
+
+.user-name {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.user-role {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.checkout-modal {
+    max-width: 400px;
+    text-align: center;
+}
+
+.checkout-header {
+    justify-content: center;
+    border-bottom: none;
+}
+
+.total-amount {
+    color: var(--text-secondary);
+    margin-bottom: 1.5rem;
+}
+
+.payment-methods {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+}
+
+.payment-option {
+    border: 2px solid var(--primary-color);
+    padding: 1rem;
+    border-radius: 8px;
+    flex: 1;
+    cursor: pointer;
+    font-weight: bold;
+    color: var(--primary-color);
+}
 .form-card {
     background: var(--surface-color);
     padding: 2rem;

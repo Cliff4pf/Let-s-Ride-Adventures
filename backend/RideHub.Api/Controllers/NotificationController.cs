@@ -40,7 +40,7 @@ namespace RideHub.Api.Controllers
         {
             // since BookingController has this method, we just replicate the needed logic here
             var auth = HttpContext.User;
-            if (auth == null || !auth.Identity.IsAuthenticated) return null;
+            if (auth == null || auth.Identity?.IsAuthenticated != true) return null;
             var uid = auth.FindFirst("uid")?.Value ?? string.Empty;
             if (string.IsNullOrEmpty(uid)) return null;
             return await _firestoreService.GetUserAsync(uid);

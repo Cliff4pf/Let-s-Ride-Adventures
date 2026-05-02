@@ -1,6 +1,7 @@
 # Firebase Configuration
 backend/RideHub.Api/firebase-key.json
 firebase-key.json
+frontend/js/config.js
 
 # Application Settings (use .example versions instead)
 backend/RideHub.Api/appsettings.json
