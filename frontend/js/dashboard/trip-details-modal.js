@@ -1,6 +1,7 @@
 // trip-details-modal.js - Reusable trip details modal for drivers and tourists
 import api from "../api.js";
 import { showToast } from "./shared.js";
+import { escapeHTML } from "../utils.js";
 
 export async function showTripDetailsModal(trip, userRole = 'driver') {
     try {
@@ -196,7 +197,7 @@ function attachTripDetailsEvents(modal, trip, userRole) {
 
 // Helper function to allow API calls by user ID if not existing in api.js
 async function getUser(userId) {
-    const token = localStorage.getItem('ridehub_token');
+    const token = await api.getToken();
     try {
         const response = await fetch(`http://localhost:5202/api/User/${userId}`, {
             headers: {

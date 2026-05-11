@@ -1,5 +1,6 @@
 import api from "../api.js";
-import { icons, createNavItem, showToast } from "./shared.js";
+import { icons, createNavItem, showToast, setupMenuBarEvents } from "./shared.js";
+import { escapeHTML } from "../utils.js";
 import { attachLogoutListener, handleLogout } from "./logout-helper.js";
 import { initializeProfileModal } from "./profile-modal.js";
 import { showTripDetailsModal, ensureGetUserAPI } from "./trip-details-modal.js";
@@ -13,97 +14,7 @@ let driverState = {
 // Ensure API has getUser method
 ensureGetUserAPI();
 
-// Setup menu bar events (settings dropdown, notifications, messages)
-function setupMenuBarEvents() {
-    const settingsBtn = document.getElementById('settingsBtnTopbar');
-    const settingsDropdown = document.getElementById('settingsDropdown');
-    const profileSettingLink = document.getElementById('profileSettingLink');
-    const themeToggleBtn = document.getElementById('themeToggleBtn');
-    const logoutSettingBtn = document.getElementById('logoutSettingBtn');
-    const notificationBtn = document.getElementById('notificationBtnTopbar');
-    const messageBtn = document.getElementById('messageBtnTopbar');
-
-    // Settings dropdown toggle
-    if (settingsBtn && settingsDropdown) {
-        settingsBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            settingsDropdown.style.display = settingsDropdown.style.display === 'none' ? 'block' : 'none';
-        });
-
-        // Close dropdown when clicking outside
-        document.addEventListener('click', (e) => {
-            if (!settingsBtn.contains(e.target) && !settingsDropdown.contains(e.target)) {
-                settingsDropdown.style.display = 'none';
-            }
-        });
-
-        // Dropdown hover effects
-        settingsDropdown.querySelectorAll('a, button').forEach(item => {
-            item.addEventListener('mouseenter', () => {
-                item.style.background = 'var(--surface-hover)';
-            });
-            item.addEventListener('mouseleave', () => {
-                item.style.background = 'transparent';
-            });
-        });
-    }
-
-    // Profile link
-    if (profileSettingLink) {
-        profileSettingLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            settingsDropdown.style.display = 'none';
-            // Driver profile modal would be implemented here
-            alert('Profile modal not yet implemented for drivers');
-        });
-    }
-
-    // Theme toggle
-    if (themeToggleBtn) {
-        const currentTheme = localStorage.getItem('ridehub_theme') || 'light';
-        const updateThemeButton = () => {
-            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            themeToggleBtn.innerHTML = isDark ? 
-                '☀️ <span>Light Mode</span>' : 
-                '🌙 <span>Dark Mode</span>';
-        };
-        
-        updateThemeButton();
-        
-        themeToggleBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            const newTheme = isDark ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('ridehub_theme', newTheme);
-            updateThemeButton();
-            // Show toast would need to be imported
-            alert(`Switched to ${newTheme} mode`);
-            settingsDropdown.style.display = 'none';
-        });
-    }
-
-    // Logout button in settings is wired automatically via logout-helper
-
-    // Notifications button - show trip notifications
-    if (notificationBtn) {
-        notificationBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            showDriverNotifications();
-        });
-    }
-
-    // Message button - show trip notifications
-    if (messageBtn) {
-        messageBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            showDriverNotifications();
-        });
-    }
-
-    // update badge once initially
-    updateNotificationBadge();
-}
+// setupMenuBarEvents moved to shared.js
 
 // Update notification badge for drivers (assigned trips count)
 function updateNotificationBadge() {
@@ -267,7 +178,9 @@ export async function renderDriverUI(sidebar, content) {
     initializeProfileModal();
 
     // Setup menu bar events
-    setupMenuBarEvents();
+    setupMenuBarEvents(showDriverNotifications, null);
+    // update badge once initially
+    updateNotificationBadge();
 
     if (driverState.activeTab === 'trips') {
         await renderTripsView(content);
@@ -549,7 +462,7 @@ async function renderHistoryView(content) {
                 <tr>
                     <td>${new Date(b.startDate).toLocaleDateString()}</td>
                     <td>${b.pickupLocation || '-'}</td>
-                    <td>${b.destination || '-'}</td>
+                    <td>${escapeHTML(b.destination || '-')}</td>
                     <td><strong>KSH ${b.price}</strong></td>
                     <td><span class="badge badge-completed">COMPLETED</span></td>
                 </tr>

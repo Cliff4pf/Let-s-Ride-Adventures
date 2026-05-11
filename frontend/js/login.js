@@ -183,8 +183,7 @@ if (loginForm) {
                 throw new Error(`Account is ${profile.status}. Contact support.`);
             }
 
-            // 4. Store in localStorage
-            localStorage.setItem('ridehub_token', idToken);
+            // Token is automatically managed by Firebase Auth
 
             // Redirect to dashboard
             window.location.href = 'dashboard.html';
@@ -295,8 +294,7 @@ if (googleLoginBtn) {
                     throw new Error(`Account is ${profile.status}. Contact support.`);
                 }
 
-                // 5. Store token in localStorage
-                localStorage.setItem('ridehub_token', idToken);
+                // Token is automatically managed by Firebase Auth
                 localStorage.setItem('user_email', user.email);
 
                 // 6. Redirect to dashboard

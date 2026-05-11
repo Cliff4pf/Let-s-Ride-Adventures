@@ -13,7 +13,6 @@ export async function handleLogout(event) {
         await signOut(auth);
         
         // Clear local storage
-        localStorage.removeItem('ridehub_token');
         localStorage.removeItem('ridehub_role');
         localStorage.removeItem('ridehub_user');
 

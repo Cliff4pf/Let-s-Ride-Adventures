@@ -17,7 +17,6 @@ onAuthStateChanged(auth, async (user) => {
 
     try {
         const token = await getIdToken(user, true);
-        localStorage.setItem('ridehub_token', token);
 
         const response = await fetch('http://localhost:5202/api/User/me', {
             headers: {
@@ -49,7 +48,6 @@ onAuthStateChanged(auth, async (user) => {
     } catch (error) {
         console.error("Dashboard initialization error:", error);
         await signOut(auth);
-        localStorage.removeItem('ridehub_token');
         localStorage.removeItem('ridehub_role');
         window.location.href = 'index.html';
     }

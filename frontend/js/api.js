@@ -4,16 +4,34 @@
  */
 
 import config from './config.js';
+import { auth } from './firebase.js';
+import { getIdToken } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
 const API_BASE_URL = config.api.baseUrl;
 
 const api = {
-    getToken: function () {
-        return localStorage.getItem('ridehub_token');
+    getToken: async function () {
+        return new Promise((resolve, reject) => {
+            const unsubscribe = auth.onAuthStateChanged(async (user) => {
+                unsubscribe();
+                if (user) {
+                    try {
+                        // Force refresh if token is close to expiring
+                        const token = await getIdToken(user, true);
+                        resolve(token);
+                    } catch (error) {
+                        console.error("Error refreshing token:", error);
+                        resolve(null);
+                    }
+                } else {
+                    resolve(null);
+                }
+            }, reject);
+        });
     },
 
     fetchWithAuth: async function (endpoint, options = {}) {
-        const token = this.getToken();
+        const token = await this.getToken();
 
         const headers = {
             'Content-Type': 'application/json',
@@ -31,7 +49,7 @@ const api = {
             });
 
             if (response.status === 401) {
-                localStorage.removeItem('ridehub_token');
+                // Token is managed by Firebase, so we just redirect to login
                 window.location.href = 'index.html';
                 throw new Error('Unauthorized. Please log in again.');
             }
@@ -308,7 +326,7 @@ const api = {
     // --- Notifications API ---
     getNotifications: async function () {
         // use direct fetch to avoid auto-logout on auth errors
-        const token = this.getToken();
+        const token = await this.getToken();
         try {
             const response = await fetch(`${API_BASE_URL}/Notification`, {
                 method: 'GET',

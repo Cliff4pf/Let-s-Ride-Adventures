@@ -1,6 +1,7 @@
 // admin.js
 import api from "../api.js";
-import { icons, createNavItem, showToast } from "./shared.js";
+import { icons, createNavItem, showToast, setupMenuBarEvents } from "./shared.js";
+import { escapeHTML } from "../utils.js";
 import { attachLogoutListener, handleLogout } from "./logout-helper.js";
 import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
 import { showBookingDetailModal } from "./booking-detail-modal.js";
@@ -29,92 +30,7 @@ function updateNotificationBadge() {
     }
 }
 
-// Setup menu bar events (settings dropdown, notifications, messages)
-function setupMenuBarEvents() {
-    const settingsBtn = document.getElementById('settingsBtnTopbar');
-    const settingsDropdown = document.getElementById('settingsDropdown');
-    const profileSettingLink = document.getElementById('profileSettingLink');
-    const themeToggleBtn = document.getElementById('themeToggleBtn');
-    const logoutSettingBtn = document.getElementById('logoutSettingBtn');
-    const notificationBtn = document.getElementById('notificationBtnTopbar');
-    const messageBtn = document.getElementById('messageBtnTopbar');
-
-    // Settings dropdown toggle
-    if (settingsBtn && settingsDropdown) {
-        settingsBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            settingsDropdown.style.display = settingsDropdown.style.display === 'none' ? 'block' : 'none';
-        });
-
-        // Close dropdown when clicking outside
-        document.addEventListener('click', (e) => {
-            if (!settingsBtn.contains(e.target) && !settingsDropdown.contains(e.target)) {
-                settingsDropdown.style.display = 'none';
-            }
-        });
-
-        // Dropdown hover effects
-        settingsDropdown.querySelectorAll('a, button').forEach(item => {
-            item.addEventListener('mouseenter', () => {
-                item.style.background = 'var(--surface-hover)';
-            });
-            item.addEventListener('mouseleave', () => {
-                item.style.background = 'transparent';
-            });
-        });
-    }
-
-    // Profile link
-    if (profileSettingLink) {
-        profileSettingLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            settingsDropdown.style.display = 'none';
-            openProfileModal();
-        });
-    }
-
-    // Theme toggle
-    if (themeToggleBtn) {
-        const currentTheme = localStorage.getItem('ridehub_theme') || 'light';
-        const updateThemeButton = () => {
-            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            themeToggleBtn.innerHTML = isDark ? 
-                '☀️ <span>Light Mode</span>' : 
-                '🌙 <span>Dark Mode</span>';
-        };
-        
-        updateThemeButton();
-        
-        themeToggleBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            const newTheme = isDark ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('ridehub_theme', newTheme);
-            updateThemeButton();
-            showToast(`Switched to ${newTheme} mode`, '#10b981');
-            settingsDropdown.style.display = 'none';
-        });
-    }
-
-    // Logout button in settings is wired automatically via logout-helper
-
-    // Notifications button - show audit logs
-    if (notificationBtn) {
-        notificationBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            showAuditLogs();
-        });
-    }
-
-    // Message button - show audit logs (same as notifications for admin)
-    if (messageBtn) {
-        messageBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            showAuditLogs();
-        });
-    }
-}
+// setupMenuBarEvents moved to shared.js
 
 export async function renderAdminUI(sidebar, content) {
     console.log('Rendering admin UI...');
@@ -143,7 +59,7 @@ export async function renderAdminUI(sidebar, content) {
     initializeProfileModal();
 
     // Setup menu bar events (settings dropdown, notifications, messages)
-    setupMenuBarEvents();
+    setupMenuBarEvents(showAuditLogs, openProfileModal);
 
     console.log('Admin state bookings length:', adminState.bookings.length);
     if (adminState.bookings.length === 0) {
@@ -545,7 +461,7 @@ function renderOverviewTab(content) {
             return `
             <tr class="booking-row" data-booking-id="${b.id}" style="cursor: pointer; transition: background-color 0.2s ease;" data-booking='${JSON.stringify(b)}'>
                 <td>${new Date(b.createdAt).toLocaleDateString()}</td>
-                <td>${b.destination || '-'}</td>
+                <td>${escapeHTML(b.destination || '-')}</td>
                 <td>${b.userId}</td>
                 <td><span class="badge badge-${b.status.toLowerCase()}">${b.status}</span></td>
                 <td>KSH ${(b.price || 0).toLocaleString()}</td>
@@ -801,8 +717,8 @@ function renderOverviewTab(content) {
 function renderUsersTab(content) {
     let usersHtml = adminState.users.map(u => `
         <tr>
-            <td>${u.fullName}</td>
-            <td>${u.email}</td>
+            <td>${escapeHTML(u.fullName)}</td>
+            <td>${escapeHTML(u.email)}</td>
             <td>${u.role}</td>
             <td>
                 ${u.status === 'Active'
@@ -1809,7 +1725,7 @@ function renderFeedbackTab(content) {
                             <div>
                                 <div style="font-size: 1.25rem; color: #fbbf24; margin-bottom: 0.5rem;">${stars}</div>
                                 <h3 style="margin: 0; color: var(--text-primary); font-size: 1rem; font-weight: 600;">
-                                    ${booking ? `${booking.pickupLocation || 'N/A'} → ${booking.destination || 'N/A'}` : 'Trip'}
+                                    ${booking ? `${booking.pickupLocation || 'N/A'} → ${escapeHTML(booking.destination || 'N/A')}` : 'Trip'}
                                 </h3>
                                 <p style="margin: 0.5rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">
                                     👤 ${user?.fullName || 'Customer'} | 🚗 ${driver?.fullName || 'Driver'} | 📅 ${booking ? new Date(booking.startDate).toLocaleDateString() : 'N/A'}
@@ -1975,7 +1891,7 @@ function showDriverAssignmentModal(bookingId) {
             <div class="modal-body" style="padding: 1.5rem;">
                 <div style="margin-bottom: 1rem; padding: 1rem; background: var(--surface-color); border-radius: 8px;">
                     <h4 style="margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--text-secondary);">BOOKING DETAILS</h4>
-                    <p style="margin: 0; font-weight: 500;">${booking.pickupLocation || 'N/A'} → ${booking.destination || 'N/A'}</p>
+                    <p style="margin: 0; font-weight: 500;">${booking.pickupLocation || 'N/A'} → ${escapeHTML(booking.destination || 'N/A')}</p>
                     <p style="margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--text-secondary);">
                         ${new Date(booking.startDate).toLocaleDateString()} | ${booking.vehicleType || 'Any'} | KSH ${booking.price?.toLocaleString() || 'N/A'}
                     </p>
@@ -2225,7 +2141,7 @@ function showUpdateStatusModal(bookingId) {
             <div class="modal-body" style="padding: 1.5rem;">
                 <div style="margin-bottom: 1rem; padding: 1rem; background: var(--surface-color); border-radius: 8px;">
                     <h4 style="margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--text-secondary);">BOOKING DETAILS</h4>
-                    <p style="margin: 0; font-weight: 500;">${booking.pickupLocation || 'N/A'} → ${booking.destination || 'N/A'}</p>
+                    <p style="margin: 0; font-weight: 500;">${booking.pickupLocation || 'N/A'} → ${escapeHTML(booking.destination || 'N/A')}</p>
                     <p style="margin: 0.25rem 0 0; font-size: 0.875rem; color: var(--text-secondary);">
                         Current Status: <span style="font-weight: 600; color: ${statusOptions.find(s => s.value === currentStatus)?.color || '#666'};">${currentStatus}</span>
                     </p>

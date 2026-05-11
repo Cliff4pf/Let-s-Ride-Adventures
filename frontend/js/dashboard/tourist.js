@@ -1,10 +1,13 @@
 import api from "../api.js";
-import { icons, createNavItem, showToast } from "./shared.js";
+import { icons, createNavItem, showToast, setupMenuBarEvents } from "./shared.js";
 import { attachLogoutListener, handleLogout } from "./logout-helper.js";
 import { initializeProfileModal, openProfileModal } from "./profile-modal.js";
 import { showPaymentConfirmationModal } from "./payment-confirmation-modal.js";
 import { showTripDetailsModal, ensureGetUserAPI } from "./trip-details-modal.js";
 import { showBillingModal } from "./billing-modal.js";
+import { escapeHTML } from "../utils.js";
+import { db } from "../firebase.js";
+import { collection, query, where, onSnapshot } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 // Ensure API has getUser method
 ensureGetUserAPI();
@@ -45,27 +48,53 @@ function calculateUserRating(bookings) {
     return Math.round(rating * 10) / 10; // Round to 1 decimal place
 }
 
-// polling helper used by dashboard to alert tourists when payment is due
-let dashboardPollInterval = null;
+// Firebase listener for real-time booking updates
+let dashboardUnsubscribe = null;
 
-function startDashboardPolling(sidebar, content) {
-    if (dashboardPollInterval) clearInterval(dashboardPollInterval);
-    // poll every 2 seconds for near-instant detection when driver completes trip
-    dashboardPollInterval = setInterval(async () => {
-        try {
-            const res = await api.getBookings();
-            if (!res.ok) return;
-            const bookings = await res.json();
-            const unpaid = bookings.find(b => b.status === 'COMPLETED' && b.paymentStatus !== 'PAID');
-            if (unpaid) {
-                showBillingModal(unpaid, async () => {
-                    renderTouristUI(sidebar, content, 'dashboard');
-                });
-            }
-        } catch (err) {
-            console.warn('Dashboard polling failed', err);
-        }
-    }, 2000); // every 2 seconds for speedy detection
+async function startDashboardPolling(sidebar, content) {
+    if (dashboardUnsubscribe) {
+        dashboardUnsubscribe();
+        dashboardUnsubscribe = null;
+    }
+    
+    try {
+        const profileRes = await api.getCurrentUser();
+        if (!profileRes.ok) return;
+        const profileData = await profileRes.json();
+        const userId = profileData.data.uid;
+
+        const q = query(collection(db, "bookings"), where("UserId", "==", userId));
+        
+        dashboardUnsubscribe = onSnapshot(q, (snapshot) => {
+            snapshot.docChanges().forEach((change) => {
+                if (change.type === "modified" || change.type === "added") {
+                    const docData = change.doc.data();
+                    
+                    // The backend API serializes to camelCase, but Firestore has PascalCase. 
+                    // Map to expected camelCase for the billing modal.
+                    const b = {
+                        id: change.doc.id,
+                        status: docData.Status,
+                        paymentStatus: docData.PaymentStatus,
+                        price: docData.Price,
+                        destination: docData.Destination,
+                        startDate: docData.StartDate?.toDate?.() || docData.StartDate,
+                        bookingType: docData.BookingType,
+                    };
+
+                    if (b.status === 'COMPLETED' && b.paymentStatus !== 'PAID') {
+                        showBillingModal(b, async () => {
+                            renderTouristUI(sidebar, content, 'dashboard');
+                        });
+                    }
+                }
+            });
+        }, (error) => {
+            console.warn('Dashboard firestore listener failed', error);
+        });
+    } catch (err) {
+        console.error('Failed to initialize dashboard listener:', err);
+    }
 }
 
 // Show feedback prompt modal for completed trips
@@ -83,7 +112,7 @@ async function showFeedbackPrompt(booking) {
                 <button class="modal-close-btn" style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--text-secondary); padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">×</button>
             </div>
             <div class="modal-body" style="padding: 1.5rem;">
-                <p style="margin-top: 0; color: var(--text-secondary);">Your trip to <strong>${booking.destination}</strong> has been successfully booked!</p>
+                <p style="margin-top: 0; color: var(--text-secondary);">Your trip to <strong>${escapeHTML(booking.destination)}</strong> has been successfully booked!</p>
                 
                 <div style="display: flex; gap: 0.75rem; margin-top: 2rem;">
                     <button type="button" id="submitFeedbackBtn" class="btn btn-primary" style="flex: 1;">Done</button>
@@ -108,99 +137,14 @@ async function showFeedbackPrompt(booking) {
     });
 }
 
-// Setup menu bar events (settings dropdown, notifications, messages)
-function setupMenuBarEvents() {
-    const settingsBtn = document.getElementById('settingsBtnTopbar');
-    const settingsDropdown = document.getElementById('settingsDropdown');
-    const profileSettingLink = document.getElementById('profileSettingLink');
-    const themeToggleBtn = document.getElementById('themeToggleBtn');
-    const logoutSettingBtn = document.getElementById('logoutSettingBtn');
-    const notificationBtn = document.getElementById('notificationBtnTopbar');
-    const messageBtn = document.getElementById('messageBtnTopbar');
-
-    // Settings dropdown toggle
-    if (settingsBtn && settingsDropdown) {
-        settingsBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            settingsDropdown.style.display = settingsDropdown.style.display === 'none' ? 'block' : 'none';
-        });
-
-        // Close dropdown when clicking outside
-        document.addEventListener('click', (e) => {
-            if (!settingsBtn.contains(e.target) && !settingsDropdown.contains(e.target)) {
-                settingsDropdown.style.display = 'none';
-            }
-        });
-
-        // Dropdown hover effects
-        settingsDropdown.querySelectorAll('a, button').forEach(item => {
-            item.addEventListener('mouseenter', () => {
-                item.style.background = 'var(--surface-hover)';
-            });
-            item.addEventListener('mouseleave', () => {
-                item.style.background = 'transparent';
-            });
-        });
-    }
-
-    // Profile link
-    if (profileSettingLink) {
-        profileSettingLink.addEventListener('click', (e) => {
-            e.preventDefault();
-            settingsDropdown.style.display = 'none';
-            openProfileModal();
-        });
-    }
-
-    // Theme toggle
-    if (themeToggleBtn) {
-        const currentTheme = localStorage.getItem('ridehub_theme') || 'light';
-        const updateThemeButton = () => {
-            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            themeToggleBtn.innerHTML = isDark ? 
-                '☀️ <span>Light Mode</span>' : 
-                '🌙 <span>Dark Mode</span>';
-        };
-        
-        updateThemeButton();
-        
-        themeToggleBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            const newTheme = isDark ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', newTheme);
-            localStorage.setItem('ridehub_theme', newTheme);
-            updateThemeButton();
-            showToast(`Switched to ${newTheme} mode`, '#10b981');
-            settingsDropdown.style.display = 'none';
-        });
-    }
-
-    // Logout button in settings is wired automatically via logout-helper
-
-    // Notifications button - show booking status updates
-    if (notificationBtn) {
-        notificationBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            showNotificationsModal();
-        });
-    }
-
-    // Message button - show same as notifications
-    if (messageBtn) {
-        messageBtn.addEventListener('click', async (e) => {
-            e.preventDefault();
-            showNotificationsModal();
-        });
-    }
-}
+// setupMenuBarEvents moved to shared.js
 
 // Show notifications modal with booking status updates
 async function showNotificationsModal() {
     try {
         // fetch any system notifications stored in backend
         let customNotifs = [];
-        const token = localStorage.getItem('ridehub_token');
+        const token = await api.getToken();
         if (token) {
             try {
                 const nres = await api.getNotifications();
@@ -292,7 +236,7 @@ async function showNotificationsModal() {
                                     <div class="notif-item" data-booking-id="${notif.booking ? notif.booking.id : ''}" style="cursor: pointer; display: flex; gap: 1rem; padding: 1rem; background: var(--surface-hover); border-radius: 8px; border-left: 4px solid ${notif.color};">
                                         <div style="flex-shrink: 0;">${notif.icon}</div>
                                         <div style="flex: 1;">
-                                            <p style="margin: 0; color: var(--text-primary); font-weight: 500;">${notif.message}</p>
+                                            <p style="margin: 0; color: var(--text-primary); font-weight: 500;">${escapeHTML(notif.message)}</p>
                                             ${notif.booking ? `
                                             <p style="margin: 0.5rem 0 0; color: var(--text-secondary); font-size: 0.875rem;">
                                                 ${new Date(notif.booking.startDate).toLocaleDateString()} at ${new Date(notif.booking.startDate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
@@ -303,11 +247,11 @@ async function showNotificationsModal() {
                                                     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; font-size: 0.875rem;">
                                                         <div>
                                                             <span style="color: var(--text-secondary);">Name:</span>
-                                                            <span style="font-weight: 600; color: var(--text-primary);">${notif.booking.driverName || 'Loading...'}</span>
+                                                            <span style="font-weight: 600; color: var(--text-primary);">${escapeHTML(notif.booking.driverName || 'Loading...')}</span>
                                                         </div>
                                                         <div>
                                                             <span style="color: var(--text-secondary);">Phone:</span>
-                                                            <span style="font-weight: 600; color: var(--text-primary);">${notif.booking.driverPhone || 'Loading...'}</span>
+                                                            <span style="font-weight: 600; color: var(--text-primary);">${escapeHTML(notif.booking.driverPhone || 'Loading...')}</span>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -473,9 +417,9 @@ async function updateNotificationBadge() {
 
 export async function renderTouristUI(sidebar, content, section = 'dashboard') {
     // clear any existing polling when navigating between sections
-    if (dashboardPollInterval) {
-        clearInterval(dashboardPollInterval);
-        dashboardPollInterval = null;
+    if (dashboardUnsubscribe) {
+        dashboardUnsubscribe();
+        dashboardUnsubscribe = null;
     }
 
     sidebar.innerHTML = `
@@ -517,7 +461,7 @@ export async function renderTouristUI(sidebar, content, section = 'dashboard') {
     initializeProfileModal();
     
     // Setup menu bar events
-    setupMenuBarEvents();
+    setupMenuBarEvents(showNotificationsModal, openProfileModal);
 
     if (section === 'dashboard') {
         await renderTouristDashboardView(sidebar, content);
@@ -535,7 +479,7 @@ async function renderTouristDashboardView(sidebar, content) {
 
     try {
         // Fetch profile data
-        const token = localStorage.getItem('ridehub_token');
+        const token = await api.getToken();
         const profileRes = await fetch('http://localhost:5202/api/User/me', {
             headers: {
                 "Authorization": `Bearer ${token}`
@@ -582,7 +526,7 @@ async function renderTouristDashboardView(sidebar, content) {
             tableHtml = bookings.map(b => `
                 <tr class="booking-row" data-booking-id="${b.id}" style="cursor: pointer; transition: background-color 0.2s ease;">
                     <td>${new Date(b.startDate).toLocaleDateString()}</td>
-                    <td>${b.destination || '-'}</td>
+                    <td>${escapeHTML(b.destination || '-')}</td>
                     <td>${b.bookingType}</td>
                     <td><span class="badge badge-${b.status.toLowerCase()}">${b.status}</span></td>
                     <td>
@@ -600,7 +544,7 @@ async function renderTouristDashboardView(sidebar, content) {
                 <div style="padding: 2rem;">
                     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
                         <div>
-                            <h1 style="font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem;">Welcome back, ${(profile.fullName || 'Traveler').split(' ')[0]}! 👋</h1>
+                            <h1 style="font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem;">Welcome back, ${escapeHTML((profile.fullName || 'Traveler').split(' ')[0])}! 👋</h1>
                             <p style="opacity: 0.9; font-size: 1.125rem; margin: 0;">Ready for your next adventure? Let's find the perfect ride for you.</p>
                         </div>
                         <div style="text-align: center;">
@@ -693,7 +637,7 @@ async function renderTouristDashboardView(sidebar, content) {
                                                 <div style="font-size: 0.75rem; color: var(--text-secondary);">${new Date(b.startDate).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
                                             </td>
                                             <td>
-                                                <div style="font-weight: 500; color: var(--text-primary);">${b.destination || 'Custom Location'}</div>
+                                                <div style="font-weight: 500; color: var(--text-primary);">${escapeHTML(b.destination || 'Custom Location')}</div>
                                             </td>
                                             <td>
                                                 <div style="display: flex; align-items: center; gap: 0.5rem;">
@@ -799,9 +743,9 @@ async function renderTouristDashboardView(sidebar, content) {
         });
 
         // helper to cleanup any existing polling when leaving dashboard
-        if (window.dashboardPollInterval) {
-            clearInterval(window.dashboardPollInterval);
-            window.dashboardPollInterval = null;
+        if (typeof dashboardUnsubscribe === 'function') {
+            dashboardUnsubscribe();
+            dashboardUnsubscribe = null;
         }
 
         // feedback buttons on paid completed bookings

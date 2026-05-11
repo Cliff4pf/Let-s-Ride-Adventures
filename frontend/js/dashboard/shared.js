@@ -66,3 +66,88 @@ export function showToast(message, color = "#10b981") { // Default green matchin
         setTimeout(() => toast.remove(), 500);
     }, 3000);
 }
+
+// Setup menu bar events (settings dropdown, notifications, messages)
+export function setupMenuBarEvents(onNotificationClick, openProfileModalCb) {
+    const settingsBtn = document.getElementById('settingsBtnTopbar');
+    const settingsDropdown = document.getElementById('settingsDropdown');
+    const profileSettingLink = document.getElementById('profileSettingLink');
+    const themeToggleBtn = document.getElementById('themeToggleBtn');
+    const logoutSettingBtn = document.getElementById('logoutSettingBtn');
+    const notificationBtn = document.getElementById('notificationBtnTopbar');
+    const messageBtn = document.getElementById('messageBtnTopbar');
+
+    // Settings dropdown toggle
+    if (settingsBtn && settingsDropdown) {
+        settingsBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            settingsDropdown.style.display = settingsDropdown.style.display === 'none' ? 'block' : 'none';
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!settingsBtn.contains(e.target) && !settingsDropdown.contains(e.target)) {
+                settingsDropdown.style.display = 'none';
+            }
+        });
+
+        // Dropdown hover effects
+        settingsDropdown.querySelectorAll('a, button').forEach(item => {
+            item.addEventListener('mouseenter', () => {
+                item.style.background = 'var(--surface-hover)';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.background = 'transparent';
+            });
+        });
+    }
+
+    // Profile link
+    if (profileSettingLink && openProfileModalCb) {
+        profileSettingLink.addEventListener('click', (e) => {
+            e.preventDefault();
+            settingsDropdown.style.display = 'none';
+            openProfileModalCb();
+        });
+    }
+
+    // Theme toggle
+    if (themeToggleBtn) {
+        const currentTheme = localStorage.getItem('ridehub_theme') || 'light';
+        const updateThemeButton = () => {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            themeToggleBtn.innerHTML = isDark ? 
+                '☀️ <span>Light Mode</span>' : 
+                '🌙 <span>Dark Mode</span>';
+        };
+        
+        updateThemeButton();
+        
+        themeToggleBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            const newTheme = isDark ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', newTheme);
+            localStorage.setItem('ridehub_theme', newTheme);
+            updateThemeButton();
+            showToast(`Switched to ${newTheme} mode`, '#10b981');
+            settingsDropdown.style.display = 'none';
+        });
+    }
+
+    // Notifications button
+    if (notificationBtn && onNotificationClick) {
+        notificationBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            onNotificationClick();
+        });
+    }
+
+    // Message button
+    if (messageBtn && onNotificationClick) {
+        messageBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            onNotificationClick();
+        });
+    }
+}
